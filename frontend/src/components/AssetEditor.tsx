@@ -149,7 +149,11 @@ export const AssetEditor: React.FC<AssetEditorProps> = ({ jsonContent, onUpdate,
         const frameData = findFrame(key);
         if (frameData && spritesheetImage) {
             const frame = frameData.frame;
-            const offset = frameData.spriteSourceSize || { x: 0, y: 0 };
+            const baseTrimOffset = frameData.spriteSourceSize || { x: 0, y: 0 };
+            // When flipped horizontally, mirror the trim offset
+            const offsetX = asset.flipH
+                ? (frameData.sourceSize?.w || frame.w) - baseTrimOffset.x - frame.w
+                : baseTrimOffset.x;
             return {
                 style: {
                     backgroundImage: `url(data:image/png;base64,${spritesheetImage})`,
@@ -160,7 +164,7 @@ export const AssetEditor: React.FC<AssetEditorProps> = ({ jsonContent, onUpdate,
                     opacity,
                     mixBlendMode: blendMode
                 },
-                offset: { x: offset.x, y: offset.y }
+                offset: { x: offsetX, y: baseTrimOffset.y }
             };
         }
 
@@ -172,7 +176,11 @@ export const AssetEditor: React.FC<AssetEditorProps> = ({ jsonContent, onUpdate,
         const sourceFrameData = findFrame(targetKey);
         if (sourceFrameData && spritesheetImage) {
             const frame = sourceFrameData.frame;
-            const offset = sourceFrameData.spriteSourceSize || { x: 0, y: 0 };
+            const baseTrimOffset = sourceFrameData.spriteSourceSize || { x: 0, y: 0 };
+            // When flipped horizontally, mirror the trim offset
+            const offsetX = asset.flipH
+                ? (sourceFrameData.sourceSize?.w || frame.w) - baseTrimOffset.x - frame.w
+                : baseTrimOffset.x;
             return {
                 style: {
                     backgroundImage: `url(data:image/png;base64,${spritesheetImage})`,
@@ -183,7 +191,7 @@ export const AssetEditor: React.FC<AssetEditorProps> = ({ jsonContent, onUpdate,
                     opacity,
                     mixBlendMode: blendMode
                 },
-                offset: { x: offset.x, y: offset.y }
+                offset: { x: offsetX, y: baseTrimOffset.y }
             };
         }
 

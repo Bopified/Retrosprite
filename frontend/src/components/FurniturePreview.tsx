@@ -354,7 +354,11 @@ export const FurniturePreview: React.FC<FurniturePreviewProps> = ({
             const regY = assetData.y || 0;
 
             // Handle sprite trimming offset
-            const trimOffsetX = frameData.spriteSourceSize?.x || 0;
+            // When flipped horizontally, mirror the trim offset
+            const baseTrimOffsetX = frameData.spriteSourceSize?.x || 0;
+            const trimOffsetX = assetData.flipH
+                ? (frameData.sourceSize?.w || frameData.frame.w) - baseTrimOffsetX - frameData.frame.w
+                : baseTrimOffsetX;
             const trimOffsetY = frameData.spriteSourceSize?.y || 0;
 
             if (b64) {
@@ -500,7 +504,11 @@ export const FurniturePreview: React.FC<FurniturePreviewProps> = ({
             const regY = assetData.y || 0;
 
             // Handle sprite trimming offset
-            const trimOffsetX = frameData.spriteSourceSize?.x || 0;
+            // When flipped horizontally, mirror the trim offset
+            const baseTrimOffsetX = frameData.spriteSourceSize?.x || 0;
+            const trimOffsetX = assetData.flipH
+                ? (frameData.sourceSize?.w || frameData.frame.w) - baseTrimOffsetX - frameData.frame.w
+                : baseTrimOffsetX;
             const trimOffsetY = frameData.spriteSourceSize?.y || 0;
 
             if (b64) {
