@@ -923,8 +923,6 @@ export const FurniturePreview: React.FC<FurniturePreviewProps> = ({
                                 <MenuItem value="sit">Sit</MenuItem>
                                 <MenuItem value="lay">Lay</MenuItem>
                                 <MenuItem value="wav">Wave</MenuItem>
-                                <MenuItem value="blow">Kiss</MenuItem>
-                                <MenuItem value="laugh">Laugh</MenuItem>
                                 <MenuItem value="respect">Respect</MenuItem>
                             </TextField>
 
