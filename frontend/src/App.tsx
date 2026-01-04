@@ -41,7 +41,7 @@ import { CodeEditor } from './components/CodeEditor';
 import { SplashScreen } from './components/SplashScreen';
 import { UpdateDialog } from './components/UpdateDialog';
 import { BatchConverterDialog } from './components/BatchConverterDialog';
-import type { NitroJSON, RsprProject } from './types';
+import type { NitroJSON, RsprProject, AvatarTestingState } from './types';
 
 const darkTheme = createTheme({
     palette: {
@@ -97,6 +97,22 @@ function App() {
 
     const [isDirty, setIsDirty] = useState(false);
 
+    const [avatarTestingState, setAvatarTestingState] = useState<AvatarTestingState>({
+        enabled: false,
+        tileRow: 3, // Center of 7x7 grid = layer 0
+        tileCol: 3, // Center of 7x7 grid
+        subLayer: 15,
+        avatarImage: null,
+        heightOffset: 5, // Y offset for avatar height
+        // Habbo imager parameters
+        username: 'bop',
+        action: 'std',
+        gesture: 'nrm',
+        direction: 2,
+        headDirection: 2,
+        size: 'm'
+    });
+
     const [sidebarWidth, setSidebarWidth] = useState(280);
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     const isResizing = useRef(false);
@@ -150,6 +166,13 @@ function App() {
             window.removeEventListener("mouseup", stopResizing);
         };
     }, [resize, stopResizing]);
+
+    // Sync avatar image to localStorage
+    useEffect(() => {
+        if (avatarTestingState.avatarImage) {
+            localStorage.setItem('retrosprite_avatar_test_image', avatarTestingState.avatarImage);
+        }
+    }, [avatarTestingState.avatarImage]);
 
     // Check for updates on startup
     useEffect(() => {
@@ -1269,6 +1292,8 @@ function App() {
                                                             <FurniturePreview
                                                                 jsonContent={parsedJson}
                                                                 images={currentProjectFiles}
+                                                                avatarTesting={avatarTestingState}
+                                                                onAvatarTestingChange={setAvatarTestingState}
                                                             />
                                                         )}
                                                     </Box>
@@ -1280,6 +1305,8 @@ function App() {
                                                             jsonContent={parsedJson}
                                                             onUpdate={handleJsonUpdate}
                                                             onRename={handleRename}
+                                                            avatarTesting={avatarTestingState}
+                                                            onAvatarTestingChange={setAvatarTestingState}
                                                         />
                                                     )}
                                                 </Box>

@@ -3,12 +3,14 @@ import {
     Box, TextField, Checkbox, FormControlLabel,
     Typography, Select, MenuItem, Button, FormControl, Paper, Stack
 } from '@mui/material';
-import type { NitroJSON } from '../types';
+import type { NitroJSON, AvatarTestingState } from '../types';
 
 interface FurnitureSettingsProps {
     jsonContent: NitroJSON;
     onUpdate: (newJson: NitroJSON) => void;
     onRename?: (newName: string) => void;
+    avatarTesting?: AvatarTestingState;
+    onAvatarTestingChange?: (newState: AvatarTestingState) => void;
 }
 
 const FormRow = ({ label, children }: { label?: string, children: React.ReactNode }) => (
@@ -22,7 +24,10 @@ const FormRow = ({ label, children }: { label?: string, children: React.ReactNod
     </Box>
 );
 
-export const FurnitureSettings: React.FC<FurnitureSettingsProps> = ({ jsonContent, onUpdate }) => {
+export const FurnitureSettings: React.FC<FurnitureSettingsProps> = ({
+    jsonContent,
+    onUpdate
+}) => {
     // Local state to manage form fields
     const [name, setName] = useState(jsonContent.name || "");
     const [logicType, setLogicType] = useState(jsonContent.logicType || "furniture_multistate");

@@ -84,3 +84,19 @@ export interface RsprProject {
     };
     path?: string;
 }
+
+export interface AvatarTestingState {
+    enabled: boolean;
+    tileRow: number;
+    tileCol: number;
+    subLayer: number;
+    avatarImage: string | null;
+    heightOffset: number; // Y offset for avatar height adjustment
+    // Habbo imager parameters
+    username: string;
+    action: 'std' | 'wlk' | 'sit' | 'lay' | 'wav' | 'blow' | 'laugh' | 'respect';
+    gesture: 'nrm';
+    direction: number; // 0-7
+    headDirection: number; // 0-7
+    size: 's' | 'm' | 'l';
+}

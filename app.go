@@ -993,7 +993,8 @@ func extractAndAddIcon(zipWriter *zip.Writer, filename string, nitroFile *NitroF
 		frame.Frame.Y+frame.Frame.H,
 	)
 
-	iconImg := image.NewRGBA(iconRect)
+	// Create a new image with just the icon (starting at 0,0)
+	iconImg := image.NewRGBA(image.Rect(0, 0, frame.Frame.W, frame.Frame.H))
 	for y := iconRect.Min.Y; y < iconRect.Max.Y; y++ {
 		for x := iconRect.Min.X; x < iconRect.Max.X; x++ {
 			iconImg.Set(x-iconRect.Min.X, y-iconRect.Min.Y, img.At(x, y))

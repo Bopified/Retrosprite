@@ -1,19 +1,36 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Box, Button, Typography, IconButton, Slider } from '@mui/material';
+import { Box, Button, Typography, IconButton, Slider, TextField, MenuItem } from '@mui/material';
 import RotateRightIcon from '@mui/icons-material/RotateRight';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import PauseIcon from '@mui/icons-material/Pause';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
-import type { NitroJSON } from '../types';
+import GridOnIcon from '@mui/icons-material/GridOn';
+import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
+import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
+import NorthWestIcon from '@mui/icons-material/NorthWest';
+import NorthEastIcon from '@mui/icons-material/NorthEast';
+import SouthWestIcon from '@mui/icons-material/SouthWest';
+import SouthEastIcon from '@mui/icons-material/SouthEast';
+import PersonIcon from '@mui/icons-material/Person';
+import type { NitroJSON, AvatarTestingState } from '../types';
 import floorTile from '../assets/floor_tile.png';
 import centerTile from '../assets/center_tile.png';
 
 interface FurniturePreviewProps {
     jsonContent: NitroJSON;
     images: Record<string, string>; // Map of filename -> base64
+    avatarTesting?: AvatarTestingState;
+    onAvatarTestingChange?: (newState: AvatarTestingState) => void;
 }
 
-export const FurniturePreview: React.FC<FurniturePreviewProps> = ({ jsonContent, images }) => {
+export const FurniturePreview: React.FC<FurniturePreviewProps> = ({
+    jsonContent,
+    images,
+    avatarTesting,
+    onAvatarTestingChange
+}) => {
     // Parse Visualization Data first to set initial direction
     const visualizations = jsonContent.visualizations || [];
     const mainViz = useMemo(() => {
@@ -53,6 +70,9 @@ export const FurniturePreview: React.FC<FurniturePreviewProps> = ({ jsonContent,
     const panStartPos = React.useRef({ x: 0, y: 0 });
     const panStartOffset = React.useRef({ x: 0, y: 0 });
 
+    // Grid and avatar testing
+    const [showTileGrid, setShowTileGrid] = useState(false);
+
     // Timer for animation
     useEffect(() => {
         let interval: number;
@@ -76,6 +96,39 @@ export const FurniturePreview: React.FC<FurniturePreviewProps> = ({ jsonContent,
         const currentIndex = availableDirections.indexOf(direction);
         const nextIndex = (currentIndex + 1) % availableDirections.length;
         setDirection(availableDirections[nextIndex]);
+    };
+
+    // Avatar movement handlers
+    const moveAvatar = (rowDelta: number, colDelta: number) => {
+        if (!avatarTesting || !onAvatarTestingChange) return;
+        const newRow = avatarTesting.tileRow + rowDelta;
+        const newCol = avatarTesting.tileCol + colDelta;
+
+        // Keep within 7x7 grid bounds
+        if (newRow >= 0 && newRow < 7 && newCol >= 0 && newCol < 7) {
+            onAvatarTestingChange({
+                ...avatarTesting,
+                tileRow: newRow,
+                tileCol: newCol
+            });
+        }
+    };
+
+    const adjustSubLayer = (delta: number) => {
+        if (!avatarTesting || !onAvatarTestingChange) return;
+        const newSubLayer = Math.max(1, Math.min(29, avatarTesting.subLayer + delta));
+        onAvatarTestingChange({
+            ...avatarTesting,
+            subLayer: newSubLayer
+        });
+    };
+
+    const toggleAvatar = () => {
+        if (!avatarTesting || !onAvatarTestingChange) return;
+        onAvatarTestingChange({
+            ...avatarTesting,
+            enabled: !avatarTesting.enabled
+        });
     };
 
     // Camera control handlers
@@ -150,6 +203,19 @@ export const FurniturePreview: React.FC<FurniturePreviewProps> = ({ jsonContent,
         return foundKey ? images[foundKey] : null;
     };
 
+    // Helper function: Generate Habbo imager URL
+    const generateHabboImagerUrl = (avatar: AvatarTestingState): string => {
+        const params = new URLSearchParams({
+            user: avatar.username,
+            direction: avatar.direction.toString(),
+            head_direction: avatar.headDirection.toString(),
+            action: avatar.action,
+            gesture: avatar.gesture,
+            size: avatar.size
+        });
+        return `https://www.habbo.com/habbo-imaging/avatarimage?${params.toString()}`;
+    };
+
     // Build render stack
     interface RenderItem {
         key: string;
@@ -169,6 +235,106 @@ export const FurniturePreview: React.FC<FurniturePreviewProps> = ({ jsonContent,
         ink?: string;
         isShadow?: boolean;
     }
+
+    // Helper function: Calculate isometric tile screen position
+    // Center of grid is (3,3) which represents layer 0
+    const getTileScreenPosition = (row: number, col: number): { x: number, y: number } => {
+        const tileWidth = 64;
+        const tileHeight = 32;
+        const centerRow = 3;
+        const centerCol = 3;
+        const offsetRow = row - centerRow;
+        const offsetCol = col - centerCol;
+        const x = (offsetCol - offsetRow) * (tileWidth / 2);
+        const y = (offsetCol + offsetRow) * (tileHeight / 2);
+        return { x, y };
+    };
+
+    // Helper function: Calculate layer from isometric position
+    const getLayerFromPosition = (row: number, col: number): number => {
+        const centerRow = 3;
+        const centerCol = 3;
+        // In isometric view, layer = (row + col) offset from center
+        const offset = (row - centerRow) + (col - centerCol);
+        return offset * 1000;
+    };
+
+    // Helper function: Calculate avatar z-index
+    const getAvatarZIndex = (tileRow: number, tileCol: number, subLayer: number): number => {
+        const layer = getLayerFromPosition(tileRow, tileCol);
+
+        if (layer === 0) {
+            // Avatar at same tile as furniture (L0)
+            // Sublayers position avatar BETWEEN furniture layers
+            // Furniture: layer 0 = ~1000, layer 1 = ~1000-4000
+            // Sublayer range 1-29 maps to 1100-3900 (between furniture layers)
+            return 1000 + (subLayer * 100);
+        } else {
+            // Avatar at different tile than furniture
+            // Tile layer takes precedence - avatar is in front/behind entire furniture
+            return (layer * 100) + (subLayer * 100);
+        }
+    };
+
+    // Helper function: Generate grid tile render items (7x7 grid for better visibility)
+    const generateGridTiles = (): RenderItem[] => {
+        if (!showTileGrid) return [];
+        const gridTiles: RenderItem[] = [];
+        const gridSize = 7; // 7x7 grid centered at (3,3)
+
+        for (let row = 0; row < gridSize; row++) {
+            for (let col = 0; col < gridSize; col++) {
+                const { x, y } = getTileScreenPosition(row, col);
+                const isCenter = row === 3 && col === 3;
+
+                gridTiles.push({
+                    key: `grid-tile-${row}-${col}`,
+                    zIndex: 1 + row,
+                    src: centerTile,
+                    sx: 0,
+                    sy: 0,
+                    sw: 62,
+                    sh: 31,
+                    dx: Math.round(x - 31),
+                    dy: Math.round(y - 15.5),
+                    dw: 62,
+                    dh: 31,
+                    pX: 31,
+                    pY: 15.5,
+                    // Highlight center tile
+                    ...(isCenter && { ink: 'ADD' })
+                });
+            }
+        }
+
+        return gridTiles;
+    };
+
+    // Helper function: Generate avatar render item
+    const generateAvatarRenderItem = (): RenderItem | null => {
+        if (!avatarTesting?.enabled) return null;
+
+        const { x, y } = getTileScreenPosition(avatarTesting.tileRow, avatarTesting.tileCol);
+        const avatarWidth = 64;
+        const avatarHeight = 110;
+
+        return {
+            key: 'avatar',
+            zIndex: getAvatarZIndex(avatarTesting.tileRow, avatarTesting.tileCol, avatarTesting.subLayer),
+            src: generateHabboImagerUrl(avatarTesting),
+            sx: 0,
+            sy: 0,
+            sw: avatarWidth,
+            sh: avatarHeight,
+            dx: Math.round(x - avatarWidth / 2),
+            dy: Math.round(y - avatarHeight + 15 - avatarTesting.heightOffset),
+            dw: avatarWidth,
+            dh: avatarHeight,
+            pX: avatarWidth / 2,
+            pY: avatarHeight - 15
+        };
+    };
+
     const renderStack: RenderItem[] = [];
 
     // 1. Shadow Layer (Explicit check)
@@ -356,6 +522,16 @@ export const FurniturePreview: React.FC<FurniturePreviewProps> = ({ jsonContent,
         }
     }
 
+    // Add grid tiles to render stack
+    const gridTiles = generateGridTiles();
+    renderStack.push(...gridTiles);
+
+    // Add avatar to render stack
+    const avatarItem = generateAvatarRenderItem();
+    if (avatarItem) {
+        renderStack.push(avatarItem);
+    }
+
     // Sort by Z-Index
     renderStack.sort((a, b) => a.zIndex - b.zIndex);
 
@@ -474,6 +650,237 @@ export const FurniturePreview: React.FC<FurniturePreviewProps> = ({ jsonContent,
                     >
                         <RestartAltIcon fontSize="small" />
                     </IconButton>
+                </Box>
+
+                {/* Grid Toggle */}
+                <Button
+                    variant={showTileGrid ? "contained" : "outlined"}
+                    size="small"
+                    startIcon={<GridOnIcon />}
+                    onClick={() => setShowTileGrid(!showTileGrid)}
+                    title="Toggle tile grid visibility"
+                >
+                    Grid
+                </Button>
+
+                {/* Avatar Controls */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, borderLeft: '1px solid #444', pl: 1, ml: 1 }}>
+                    <Button
+                        variant={avatarTesting?.enabled ? "contained" : "outlined"}
+                        size="small"
+                        startIcon={<PersonIcon />}
+                        onClick={toggleAvatar}
+                        title="Toggle avatar visibility"
+                        color={avatarTesting?.enabled ? "primary" : "inherit"}
+                    >
+                        Avatar
+                    </Button>
+
+                    {avatarTesting?.enabled && (
+                        <>
+                            <Box sx={{ display: 'grid', gridTemplateColumns: 'auto auto auto', gap: 0.5, ml: 1 }}>
+                                {/* Row 1: Up-Left, Up, Up-Right */}
+                                <IconButton
+                                    size="small"
+                                    onClick={() => moveAvatar(0, -1)}
+                                    title="Up-Left (layer -1000)"
+                                    sx={{ color: '#aaa' }}
+                                >
+                                    <NorthWestIcon fontSize="small" />
+                                </IconButton>
+                                <IconButton
+                                    size="small"
+                                    onClick={() => moveAvatar(-1, -1)}
+                                    title="Up (layer -2000)"
+                                    sx={{ color: '#aaa' }}
+                                >
+                                    <ArrowUpwardIcon fontSize="small" />
+                                </IconButton>
+                                <IconButton
+                                    size="small"
+                                    onClick={() => moveAvatar(-1, 0)}
+                                    title="Up-Right (layer -1000)"
+                                    sx={{ color: '#aaa' }}
+                                >
+                                    <NorthEastIcon fontSize="small" />
+                                </IconButton>
+
+                                {/* Row 2: Left, Center Label, Right */}
+                                <IconButton
+                                    size="small"
+                                    onClick={() => moveAvatar(1, -1)}
+                                    title="Left (layer 0)"
+                                    sx={{ color: '#aaa' }}
+                                >
+                                    <ArrowBackIcon fontSize="small" />
+                                </IconButton>
+                                <Typography
+                                    variant="caption"
+                                    sx={{
+                                        color: '#aaa',
+                                        minWidth: 40,
+                                        textAlign: 'center',
+                                        alignSelf: 'center'
+                                    }}
+                                >
+                                    L{getLayerFromPosition(avatarTesting.tileRow, avatarTesting.tileCol)}
+                                </Typography>
+                                <IconButton
+                                    size="small"
+                                    onClick={() => moveAvatar(-1, 1)}
+                                    title="Right (layer 0)"
+                                    sx={{ color: '#aaa' }}
+                                >
+                                    <ArrowForwardIcon fontSize="small" />
+                                </IconButton>
+
+                                {/* Row 3: Down-Left, Down, Down-Right */}
+                                <IconButton
+                                    size="small"
+                                    onClick={() => moveAvatar(1, 0)}
+                                    title="Down-Left (layer +1000)"
+                                    sx={{ color: '#aaa' }}
+                                >
+                                    <SouthWestIcon fontSize="small" />
+                                </IconButton>
+                                <IconButton
+                                    size="small"
+                                    onClick={() => moveAvatar(1, 1)}
+                                    title="Down (layer +2000)"
+                                    sx={{ color: '#aaa' }}
+                                >
+                                    <ArrowDownwardIcon fontSize="small" />
+                                </IconButton>
+                                <IconButton
+                                    size="small"
+                                    onClick={() => moveAvatar(0, 1)}
+                                    title="Down-Right (layer +1000)"
+                                    sx={{ color: '#aaa' }}
+                                >
+                                    <SouthEastIcon fontSize="small" />
+                                </IconButton>
+                            </Box>
+
+                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, ml: 1 }}>
+                                <IconButton
+                                    size="small"
+                                    onClick={() => adjustSubLayer(1)}
+                                    title="Sub-layer +1"
+                                    sx={{ color: '#aaa', fontSize: '0.7rem', padding: 0.5 }}
+                                >
+                                    +
+                                </IconButton>
+                                <Typography variant="caption" sx={{ color: '#aaa', textAlign: 'center', fontSize: '0.7rem' }}>
+                                    {avatarTesting.subLayer}
+                                </Typography>
+                                <IconButton
+                                    size="small"
+                                    onClick={() => adjustSubLayer(-1)}
+                                    title="Sub-layer -1"
+                                    sx={{ color: '#aaa', fontSize: '0.7rem', padding: 0.5 }}
+                                >
+                                    -
+                                </IconButton>
+                            </Box>
+
+                            {/* Habbo Imager Parameters */}
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: 2, borderLeft: '1px solid #444', pl: 2 }}>
+                                <TextField
+                                    select
+                                    label="Action"
+                                    size="small"
+                                    value={avatarTesting.action}
+                                    onChange={(e) => onAvatarTestingChange?.({ ...avatarTesting, action: e.target.value as any })}
+                                    sx={{ width: 100 }}
+                                >
+                                    <MenuItem value="std">Stand</MenuItem>
+                                    <MenuItem value="wlk">Walk</MenuItem>
+                                    <MenuItem value="sit">Sit</MenuItem>
+                                    <MenuItem value="lay">Lay</MenuItem>
+                                    <MenuItem value="wav">Wave</MenuItem>
+                                    <MenuItem value="blow">Kiss</MenuItem>
+                                    <MenuItem value="laugh">Laugh</MenuItem>
+                                    <MenuItem value="respect">Respect</MenuItem>
+                                </TextField>
+
+                                <IconButton
+                                    size="small"
+                                    onClick={() => {
+                                        let newDirection: number;
+                                        let newHeadDirection: number;
+
+                                        if (avatarTesting.action === 'sit') {
+                                            // Sitting only has 4 directions: 0, 2, 4, 6
+                                            const sittingDirections = [0, 2, 4, 6];
+                                            const currentIndex = sittingDirections.indexOf(avatarTesting.direction);
+                                            const nextIndex = (currentIndex + 1) % sittingDirections.length;
+                                            newDirection = sittingDirections[nextIndex];
+                                            newHeadDirection = newDirection;
+                                        } else {
+                                            // All other actions use 8 directions
+                                            newDirection = (avatarTesting.direction + 1) % 8;
+                                            newHeadDirection = (avatarTesting.headDirection + 1) % 8;
+                                        }
+
+                                        onAvatarTestingChange?.({
+                                            ...avatarTesting,
+                                            direction: newDirection,
+                                            headDirection: newHeadDirection
+                                        });
+                                    }}
+                                    title="Rotate avatar"
+                                    sx={{ color: '#aaa' }}
+                                >
+                                    <RotateRightIcon fontSize="small" />
+                                </IconButton>
+
+                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, ml: 1 }}>
+                                    <Typography variant="caption" sx={{ color: '#aaa', fontSize: '0.6rem', textAlign: 'center' }}>
+                                        Height
+                                    </Typography>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                        <IconButton
+                                            size="small"
+                                            onClick={() => onAvatarTestingChange?.({ ...avatarTesting, heightOffset: avatarTesting.heightOffset - 5 })}
+                                            title="Lower avatar"
+                                            sx={{ color: '#aaa', fontSize: '0.7rem', padding: 0.5 }}
+                                        >
+                                            -
+                                        </IconButton>
+                                        <Typography variant="caption" sx={{ color: '#aaa', minWidth: 30, textAlign: 'center', fontSize: '0.7rem' }}>
+                                            {avatarTesting.heightOffset}
+                                        </Typography>
+                                        <IconButton
+                                            size="small"
+                                            onClick={() => onAvatarTestingChange?.({ ...avatarTesting, heightOffset: avatarTesting.heightOffset + 5 })}
+                                            title="Raise avatar"
+                                            sx={{ color: '#aaa', fontSize: '0.7rem', padding: 0.5 }}
+                                        >
+                                            +
+                                        </IconButton>
+                                    </Box>
+                                </Box>
+
+                                <IconButton
+                                    size="small"
+                                    onClick={() => onAvatarTestingChange?.({
+                                        ...avatarTesting,
+                                        tileRow: 3,
+                                        tileCol: 3,
+                                        subLayer: 15,
+                                        direction: 2,
+                                        headDirection: 2,
+                                        heightOffset: 5,
+                                        action: 'std'
+                                    })}
+                                    title="Reset position"
+                                    sx={{ color: '#aaa', ml: 1 }}
+                                >
+                                    <RestartAltIcon fontSize="small" />
+                                </IconButton>
+                            </Box>
+                        </>
+                    )}
                 </Box>
 
                 {/* FPS Controls */}
