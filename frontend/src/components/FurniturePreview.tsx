@@ -104,8 +104,8 @@ export const FurniturePreview: React.FC<FurniturePreviewProps> = ({
         const newRow = avatarTesting.tileRow + rowDelta;
         const newCol = avatarTesting.tileCol + colDelta;
 
-        // Keep within 7x7 grid bounds
-        if (newRow >= 0 && newRow < 7 && newCol >= 0 && newCol < 7) {
+        // Keep within 30x30 grid bounds
+        if (newRow >= 0 && newRow < 30 && newCol >= 0 && newCol < 30) {
             onAvatarTestingChange({
                 ...avatarTesting,
                 tileRow: newRow,
@@ -237,12 +237,12 @@ export const FurniturePreview: React.FC<FurniturePreviewProps> = ({
     }
 
     // Helper function: Calculate isometric tile screen position
-    // Center of grid is (3,3) which represents layer 0
+    // Center of grid is (15,15) which represents layer 0
     const getTileScreenPosition = (row: number, col: number): { x: number, y: number } => {
         const tileWidth = 64;
         const tileHeight = 32;
-        const centerRow = 3;
-        const centerCol = 3;
+        const centerRow = 15;
+        const centerCol = 15;
         const offsetRow = row - centerRow;
         const offsetCol = col - centerCol;
         const x = (offsetCol - offsetRow) * (tileWidth / 2);
@@ -252,8 +252,8 @@ export const FurniturePreview: React.FC<FurniturePreviewProps> = ({
 
     // Helper function: Calculate layer from isometric position
     const getLayerFromPosition = (row: number, col: number): number => {
-        const centerRow = 3;
-        const centerCol = 3;
+        const centerRow = 15;
+        const centerCol = 15;
         // In isometric view, layer = (row + col) offset from center
         const offset = (row - centerRow) + (col - centerCol);
         return offset * 1000;
@@ -276,20 +276,20 @@ export const FurniturePreview: React.FC<FurniturePreviewProps> = ({
         }
     };
 
-    // Helper function: Generate grid tile render items (7x7 grid for better visibility)
+    // Helper function: Generate grid tile render items (30x30 grid for better visibility)
     const generateGridTiles = (): RenderItem[] => {
         if (!showTileGrid) return [];
         const gridTiles: RenderItem[] = [];
-        const gridSize = 7; // 7x7 grid centered at (3,3)
+        const gridSize = 30; // 30x30 grid centered at (15,15)
 
         for (let row = 0; row < gridSize; row++) {
             for (let col = 0; col < gridSize; col++) {
                 const { x, y } = getTileScreenPosition(row, col);
-                const isCenter = row === 3 && col === 3;
+                const isCenter = row === 15 && col === 15;
 
                 gridTiles.push({
                     key: `grid-tile-${row}-${col}`,
-                    zIndex: 1 + row,
+                    zIndex: getLayerFromPosition(row, col) * 100 - 10,
                     src: centerTile,
                     sx: 0,
                     sy: 0,
@@ -327,7 +327,7 @@ export const FurniturePreview: React.FC<FurniturePreviewProps> = ({
             sw: avatarWidth,
             sh: avatarHeight,
             dx: Math.round(x - avatarWidth / 2),
-            dy: Math.round(y - avatarHeight + 15 - avatarTesting.heightOffset),
+            dy: Math.round(y - avatarHeight + 10 - avatarTesting.heightOffset),
             dw: avatarWidth,
             dh: avatarHeight,
             pX: avatarWidth / 2,
@@ -865,12 +865,12 @@ export const FurniturePreview: React.FC<FurniturePreviewProps> = ({
                                     size="small"
                                     onClick={() => onAvatarTestingChange?.({
                                         ...avatarTesting,
-                                        tileRow: 3,
-                                        tileCol: 3,
+                                        tileRow: 15,
+                                        tileCol: 15,
                                         subLayer: 15,
                                         direction: 2,
                                         headDirection: 2,
-                                        heightOffset: 5,
+                                        heightOffset: 0,
                                         action: 'std'
                                     })}
                                     title="Reset position"
@@ -925,6 +925,7 @@ export const FurniturePreview: React.FC<FurniturePreviewProps> = ({
                     backgroundImage: `url(${floorTile})`,
                     backgroundRepeat: 'repeat',
                     backgroundPosition: `calc(50% + ${pan.x}px) calc(50% + ${pan.y}px)`,
+                    backgroundSize: `${64 * scale}px ${32 * scale}px`,
                     imageRendering: 'pixelated',
                     display: 'flex',
                     justifyContent: 'center',

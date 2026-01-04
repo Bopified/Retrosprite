@@ -99,11 +99,11 @@ function App() {
 
     const [avatarTestingState, setAvatarTestingState] = useState<AvatarTestingState>({
         enabled: false,
-        tileRow: 3, // Center of 7x7 grid = layer 0
-        tileCol: 3, // Center of 7x7 grid
+        tileRow: 15, // Center of 30x30 grid = layer 0
+        tileCol: 15, // Center of 30x30 grid
         subLayer: 15,
         avatarImage: null,
-        heightOffset: 5, // Y offset for avatar height
+        heightOffset: 0, // Y offset for avatar height
         // Habbo imager parameters
         username: 'bop',
         action: 'std',
