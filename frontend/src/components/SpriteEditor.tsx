@@ -12,6 +12,10 @@ import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import CropIcon from '@mui/icons-material/Crop';
 import AspectRatioIcon from '@mui/icons-material/AspectRatio';
 import FlipIcon from '@mui/icons-material/Flip';
+import UndoIcon from '@mui/icons-material/Undo';
+import SelectAllIcon from '@mui/icons-material/SelectAll';
+import ZoomInIcon from '@mui/icons-material/ZoomIn';
+import ZoomOutIcon from '@mui/icons-material/ZoomOut';
 import type { NitroJSON } from '../types';
 import {
     GenerateSpriteThumbnails,
@@ -37,7 +41,7 @@ interface SpriteInfo {
 interface SpriteEditorProps {
     jsonContent: NitroJSON;
     imageContent: string | null;
-    onUpdate: (newJson: NitroJSON) => void;
+    onUpdate: (newJson: NitroJSON, newImage?: string) => void;
 }
 
 type ViewMode = 'gallery' | 'edit';
@@ -63,15 +67,60 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
     // File watching state
     const [pendingChanges, setPendingChanges] = useState<Map<string, string>>(new Map());
 
+    // Notification state
+    const [notification, setNotification] = useState<{ open: boolean; message: string; severity: 'success' | 'error' | 'info' }>({
+        open: false,
+        message: '',
+        severity: 'info'
+    });
+
+    const showNotification = (message: string, severity: 'success' | 'error' | 'info' = 'info') => {
+        setNotification({ open: true, message, severity });
+    };
+
     // In-app editing state
     const [editMode, setEditMode] = useState<EditMode>(null);
     const [cropRect, setCropRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
     const [resizeDimensions, setResizeDimensions] = useState<{ w: number; h: number }>({ w: 64, h: 64 });
     const [isCropping, setIsCropping] = useState(false);
+    const [canvasZoom, setCanvasZoom] = useState(1);
     const cropStartRef = useRef<{ x: number; y: number } | null>(null);
 
     // Canvas ref for editing
     const canvasRef = useRef<HTMLCanvasElement>(null);
+
+    // Undo functionality
+    const [undoStack, setUndoStack] = useState<{ json: NitroJSON; image: string }[]>([]);
+    const canUndo = undoStack.length > 0;
+
+    const pushToUndoStack = () => {
+        if (!imageContent) return;
+        setUndoStack(prev => [...prev, { json: JSON.parse(JSON.stringify(jsonContent)), image: imageContent }]);
+    };
+
+    const performUndo = () => {
+        if (undoStack.length === 0) return;
+
+        const newStack = [...undoStack];
+        const previousState = newStack.pop()!;
+        setUndoStack(newStack);
+        onUpdate(previousState.json);
+    };
+
+    // Keyboard shortcut for undo
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+            if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+                e.preventDefault();
+                performUndo();
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [undoStack]);
 
     // Load thumbnails on mount
     useEffect(() => {
@@ -129,20 +178,38 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
         const sprite = sprites.find(s => s.name === selectedSprite);
         if (!sprite) return;
 
-        const ctx = canvasRef.current.getContext('2d');
+        const ctx = canvasRef.current.getContext('2d', { alpha: true });
         if (!ctx) return;
+
+        // Disable image smoothing for crisp pixel art
+        ctx.imageSmoothingEnabled = false;
 
         const img = new Image();
         img.onload = () => {
-            ctx.clearRect(0, 0, canvasRef.current!.width, canvasRef.current!.height);
-            ctx.drawImage(img, 0, 0);
+            const canvas = canvasRef.current;
+            if (!canvas) return;
+
+            // Clear and redraw the sprite
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0, sprite.w, sprite.h);
 
             // Draw crop overlay if in crop mode
-            if (editMode === 'crop' && cropRect) {
+            if (editMode === 'crop' && cropRect && cropRect.w > 0 && cropRect.h > 0) {
                 ctx.strokeStyle = '#00ff00';
                 ctx.lineWidth = 2;
+                ctx.setLineDash([5, 5]);
                 ctx.strokeRect(cropRect.x, cropRect.y, cropRect.w, cropRect.h);
+
+                // Draw semi-transparent overlay outside crop area
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                ctx.fillRect(0, 0, canvas.width, cropRect.y); // Top
+                ctx.fillRect(0, cropRect.y, cropRect.x, cropRect.h); // Left
+                ctx.fillRect(cropRect.x + cropRect.w, cropRect.y, canvas.width - (cropRect.x + cropRect.w), cropRect.h); // Right
+                ctx.fillRect(0, cropRect.y + cropRect.h, canvas.width, canvas.height - (cropRect.y + cropRect.h)); // Bottom
             }
+        };
+        img.onerror = () => {
+            console.error('Failed to load sprite image for editing');
         };
         img.src = `data:image/png;base64,${sprite.thumbnail}`;
     }, [viewMode, selectedSprite, editMode, cropRect, sprites]);
@@ -161,17 +228,65 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
         return files;
     };
 
-    const processBackendResponse = (files: { [key: string]: number[] }): { jsonContent: NitroJSON; imageContent: string } => {
-        const jsonFileName = Object.keys(files).find(name => name.endsWith('.json'));
-        if (!jsonFileName) throw new Error('No JSON file in response');
+    const processBackendResponse = (files: { [key: string]: number[] | string }): { jsonContent: NitroJSON; imageContent: string } => {
+        console.log('Processing backend response. Files received:', Object.keys(files));
 
-        const jsonBytes = new Uint8Array(files[jsonFileName]);
+        const jsonFileName = Object.keys(files).find(name => name.endsWith('.json'));
+        if (!jsonFileName) {
+            console.error('Available files:', Object.keys(files));
+            throw new Error('No JSON file in response');
+        }
+
+        // Handle both base64 strings and number arrays from Wails
+        let jsonBytes: Uint8Array;
+        const jsonData = files[jsonFileName];
+
+        if (typeof jsonData === 'string') {
+            // Wails returned base64-encoded string
+            console.log('Decoding base64 JSON string');
+            jsonBytes = Uint8Array.from(atob(jsonData), c => c.charCodeAt(0));
+        } else {
+            // Wails returned number array
+            console.log('Converting number array to Uint8Array');
+            jsonBytes = new Uint8Array(jsonData);
+        }
+
+        console.log('JSON file bytes length:', jsonBytes.length);
+
+        if (jsonBytes.length === 0) {
+            console.error('JSON file is empty! Backend returned 0 bytes for JSON.');
+            throw new Error('JSON file is empty (0 bytes)');
+        }
+
         const jsonStr = new TextDecoder().decode(jsonBytes);
-        const jsonContent = JSON.parse(jsonStr);
+        console.log('Decoded JSON string length:', jsonStr.length);
+        console.log('First 200 chars:', jsonStr.substring(0, 200));
+        console.log('Last 200 chars:', jsonStr.substring(Math.max(0, jsonStr.length - 200)));
+
+        if (!jsonStr || jsonStr.trim().length === 0) {
+            throw new Error('JSON string is empty after decoding');
+        }
+
+        let jsonContent;
+        try {
+            jsonContent = JSON.parse(jsonStr);
+        } catch (e) {
+            console.error('Failed to parse JSON. String:', jsonStr);
+            throw new Error(`JSON parse error: ${e instanceof Error ? e.message : String(e)}`);
+        }
 
         const pngFileName = jsonContent.spritesheet.meta.image;
-        const pngBytes = new Uint8Array(files[pngFileName]);
-        const imageContent = btoa(String.fromCharCode(...pngBytes));
+        const pngData = files[pngFileName];
+
+        let imageContent: string;
+        if (typeof pngData === 'string') {
+            // Already base64-encoded
+            imageContent = pngData;
+        } else {
+            // Convert number array to base64
+            const pngBytes = new Uint8Array(pngData);
+            imageContent = btoa(String.fromCharCode(...pngBytes));
+        }
 
         return { jsonContent, imageContent };
     };
@@ -196,6 +311,14 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
         } else {
             setSelectedSprites([...selectedSprites, spriteName]);
         }
+    };
+
+    const handleSelectAll = () => {
+        setSelectedSprites(filteredSprites.map(s => s.name));
+    };
+
+    const handleDeselectAll = () => {
+        setSelectedSprites([]);
     };
 
     const handleExtractClick = () => {
@@ -242,8 +365,8 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
         if (editMode !== 'crop') return;
 
         const rect = canvasRef.current!.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
+        const x = Math.round((e.clientX - rect.left) / canvasZoom);
+        const y = Math.round((e.clientY - rect.top) / canvasZoom);
 
         cropStartRef.current = { x, y };
         setCropRect({ x, y, w: 0, h: 0 });
@@ -254,8 +377,8 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
         if (editMode !== 'crop' || !isCropping || !cropStartRef.current) return;
 
         const rect = canvasRef.current!.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
+        const x = Math.round((e.clientX - rect.left) / canvasZoom);
+        const y = Math.round((e.clientY - rect.top) / canvasZoom);
 
         setCropRect({
             x: Math.min(cropStartRef.current.x, x),
@@ -273,15 +396,40 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
         if (!cropRect || !selectedSprite) return;
 
         try {
+            pushToUndoStack();
             const files = prepareFilesForBackend(jsonContent, imageContent!);
-            const result = await CropSprite(files, selectedSprite, cropRect.x, cropRect.y, cropRect.w, cropRect.h);
 
-            const { jsonContent: newJson } = processBackendResponse(result);
-            onUpdate(newJson);
+            // Ensure all crop values are integers
+            const x = Math.round(cropRect.x);
+            const y = Math.round(cropRect.y);
+            const w = Math.round(cropRect.w);
+            const h = Math.round(cropRect.h);
+
+            // selectedSprite already contains the full frame name from spritesheet
+            console.log('Cropping sprite:', selectedSprite, 'at', { x, y, w, h });
+
+            const result = await CropSprite(files, selectedSprite, x, y, w, h);
+
+            console.log('Raw result from backend:', result);
+            console.log('Result type:', typeof result);
+            console.log('Result is null?', result === null);
+            console.log('Result is undefined?', result === undefined);
+            console.log('Result keys:', result ? Object.keys(result) : 'no keys');
+
+            if (!result || Object.keys(result).length === 0) {
+                throw new Error('Backend returned empty response');
+            }
+
+            console.log('Crop result received:', Object.keys(result));
+
+            const { jsonContent: newJson, imageContent: newImage } = processBackendResponse(result);
+            onUpdate(newJson, newImage);
             setViewMode('gallery');
             setCropRect(null);
+            showNotification('Sprite cropped successfully', 'success');
         } catch (error) {
             console.error('Failed to crop sprite:', error);
+            showNotification(`Failed to crop sprite: ${error instanceof Error ? error.message : String(error)}`, 'error');
         }
     };
 
@@ -289,29 +437,60 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
         if (!selectedSprite) return;
 
         try {
+            pushToUndoStack();
             const files = prepareFilesForBackend(jsonContent, imageContent!);
-            const result = await ResizeSprite(files, selectedSprite, resizeDimensions.w, resizeDimensions.h);
 
-            const { jsonContent: newJson } = processBackendResponse(result);
-            onUpdate(newJson);
+            // Ensure dimensions are integers
+            const w = Math.round(resizeDimensions.w);
+            const h = Math.round(resizeDimensions.h);
+
+            // selectedSprite already contains the full frame name from spritesheet
+            const result = await ResizeSprite(files, selectedSprite, w, h);
+
+            if (!result || Object.keys(result).length === 0) {
+                throw new Error('Backend returned empty response');
+            }
+
+            const { jsonContent: newJson, imageContent: newImage } = processBackendResponse(result);
+            onUpdate(newJson, newImage);
             setViewMode('gallery');
+            showNotification('Sprite resized successfully', 'success');
         } catch (error) {
             console.error('Failed to resize sprite:', error);
+            showNotification(`Failed to resize sprite: ${error instanceof Error ? error.message : String(error)}`, 'error');
         }
     };
 
     const handleApplyFlip = async (horizontal: boolean) => {
         if (!selectedSprite) return;
 
-        try {
-            const files = prepareFilesForBackend(jsonContent, imageContent!);
-            const result = await FlipSprite(files, selectedSprite, horizontal);
+        console.log('Flipping sprite:', selectedSprite, 'horizontal:', horizontal);
 
-            const { jsonContent: newJson } = processBackendResponse(result);
-            onUpdate(newJson);
+        try {
+            pushToUndoStack();
+            const files = prepareFilesForBackend(jsonContent, imageContent!);
+            console.log('Calling FlipSprite with files:', Object.keys(files));
+
+            // selectedSprite already contains the full frame name from spritesheet
+            console.log('Sprite name:', selectedSprite);
+
+            const result = await FlipSprite(files, selectedSprite, horizontal);
+            console.log('FlipSprite result:', result ? 'success' : 'null');
+
+            if (!result || Object.keys(result).length === 0) {
+                throw new Error('Backend returned empty response');
+            }
+
+            const { jsonContent: newJson, imageContent: newImage } = processBackendResponse(result);
+            console.log('Processed response, updating...');
+
+            onUpdate(newJson, newImage);
             setViewMode('gallery');
+            console.log('Flip completed successfully');
+            showNotification(`Sprite flipped ${horizontal ? 'horizontally' : 'vertically'}`, 'success');
         } catch (error) {
             console.error('Failed to flip sprite:', error);
+            showNotification(`Failed to flip sprite: ${error instanceof Error ? error.message : String(error)}`, 'error');
         }
     };
 
@@ -326,6 +505,13 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
                 {viewMode === 'gallery' ? (
                     <>
                         <Typography variant="h6">Sprites ({filteredSprites.length})</Typography>
+                        <Button
+                            variant="outlined"
+                            startIcon={<SelectAllIcon />}
+                            onClick={selectedSprites.length === filteredSprites.length ? handleDeselectAll : handleSelectAll}
+                        >
+                            {selectedSprites.length === filteredSprites.length ? 'Deselect All' : 'Select All'}
+                        </Button>
                         <Button
                             variant="contained"
                             startIcon={<ImageIcon />}
@@ -350,6 +536,14 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
                         >
                             Edit
                         </Button>
+                        <Button
+                            variant="outlined"
+                            startIcon={<UndoIcon />}
+                            onClick={performUndo}
+                            disabled={!canUndo}
+                        >
+                            Undo
+                        </Button>
                         <Box sx={{ flexGrow: 1 }} />
                         <Typography variant="caption" color="text.secondary">
                             {selectedSprites.length} selected
@@ -358,6 +552,14 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
                 ) : (
                     <>
                         <Typography variant="h6">Editing: {selectedSprite}</Typography>
+                        <Button
+                            variant="outlined"
+                            startIcon={<UndoIcon />}
+                            onClick={performUndo}
+                            disabled={!canUndo}
+                        >
+                            Undo
+                        </Button>
                         <Box sx={{ flexGrow: 1 }} />
                         <Button onClick={() => setViewMode('gallery')}>
                             Back to Gallery
@@ -439,7 +641,10 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
                                                 <img
                                                     src={`data:image/png;base64,${sprite.thumbnail}`}
                                                     alt={sprite.name}
-                                                    style={{ maxWidth: '100%', maxHeight: '100%' }}
+                                                    style={{
+                                                        maxWidth: '100%',
+                                                        maxHeight: '100%'
+                                                    }}
                                                 />
                                             </Box>
 
@@ -510,77 +715,80 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
                     </>
                 ) : (
                     /* Edit view */
-                    <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', p: 2, alignItems: 'center', justifyContent: 'center' }}>
-                        <Paper sx={{ p: 2, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-                            {/* Edit mode selector */}
-                            <Box sx={{ display: 'flex', gap: 1 }}>
-                                <Button
-                                    variant={editMode === 'crop' ? 'contained' : 'outlined'}
-                                    startIcon={<CropIcon />}
-                                    onClick={() => setEditMode('crop')}
-                                >
-                                    Crop
-                                </Button>
-                                <Button
-                                    variant={editMode === 'resize' ? 'contained' : 'outlined'}
-                                    startIcon={<AspectRatioIcon />}
-                                    onClick={() => setEditMode('resize')}
-                                >
-                                    Resize
-                                </Button>
-                                <Button
-                                    variant={editMode === 'flip' ? 'contained' : 'outlined'}
-                                    startIcon={<FlipIcon />}
-                                    onClick={() => setEditMode('flip')}
-                                >
-                                    Flip
-                                </Button>
-                            </Box>
+                    <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                        {/* Edit controls panel */}
+                        <Box sx={{ p: 2, borderBottom: '1px solid #555', bgcolor: '#1e1e1e' }}>
+                            <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+                                {/* Edit mode selector */}
+                                <Box sx={{ display: 'flex', gap: 1 }}>
+                                    <Button
+                                        variant={editMode === 'crop' ? 'contained' : 'outlined'}
+                                        startIcon={<CropIcon />}
+                                        onClick={() => setEditMode('crop')}
+                                    >
+                                        Crop
+                                    </Button>
+                                    <Button
+                                        variant={editMode === 'resize' ? 'contained' : 'outlined'}
+                                        startIcon={<AspectRatioIcon />}
+                                        onClick={() => setEditMode('resize')}
+                                    >
+                                        Resize
+                                    </Button>
+                                    <Button
+                                        variant={editMode === 'flip' ? 'contained' : 'outlined'}
+                                        startIcon={<FlipIcon />}
+                                        onClick={() => setEditMode('flip')}
+                                    >
+                                        Flip
+                                    </Button>
+                                </Box>
 
-                            {/* Canvas */}
-                            {selectedSprite && sprites.find(s => s.name === selectedSprite) && (
-                                <canvas
-                                    ref={canvasRef}
-                                    width={sprites.find(s => s.name === selectedSprite)!.w}
-                                    height={sprites.find(s => s.name === selectedSprite)!.h}
-                                    onMouseDown={handleCanvasMouseDown}
-                                    onMouseMove={handleCanvasMouseMove}
-                                    onMouseUp={handleCanvasMouseUp}
-                                    style={{
-                                        border: '1px solid #555',
-                                        cursor: editMode === 'crop' ? 'crosshair' : 'default',
-                                        maxWidth: '100%',
-                                        imageRendering: 'pixelated'
-                                    }}
-                                />
-                            )}
+                                {/* Zoom controls */}
+                                {editMode === 'crop' && (
+                                    <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', ml: 2 }}>
+                                        <IconButton
+                                            onClick={() => setCanvasZoom(Math.max(1, canvasZoom - 1))}
+                                            disabled={canvasZoom <= 1}
+                                            size="small"
+                                        >
+                                            <ZoomOutIcon />
+                                        </IconButton>
+                                        <Typography variant="caption" sx={{ minWidth: 60, textAlign: 'center' }}>
+                                            {(canvasZoom * 100).toFixed(0)}%
+                                        </Typography>
+                                        <IconButton
+                                            onClick={() => setCanvasZoom(Math.min(8, canvasZoom + 1))}
+                                            disabled={canvasZoom >= 8}
+                                            size="small"
+                                        >
+                                            <ZoomInIcon />
+                                        </IconButton>
+                                    </Box>
+                                )}
 
-                            {/* Edit controls based on mode */}
-                            {editMode === 'crop' && (
-                                <Box>
-                                    <Typography variant="caption" color="text.secondary" gutterBottom>
-                                        Click and drag on the canvas to select crop area
-                                    </Typography>
+                                <Box sx={{ flexGrow: 1 }} />
+
+                                {/* Action buttons */}
+                                {editMode === 'crop' && (
                                     <Button
                                         variant="contained"
                                         onClick={handleApplyCrop}
                                         disabled={!cropRect || cropRect.w === 0 || cropRect.h === 0}
-                                        sx={{ mt: 1 }}
                                     >
                                         Apply Crop
                                     </Button>
-                                </Box>
-                            )}
+                                )}
 
-                            {editMode === 'resize' && (
-                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                                    <Box sx={{ display: 'flex', gap: 2 }}>
+                                {editMode === 'resize' && (
+                                    <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
                                         <TextField
                                             label="Width"
                                             type="number"
                                             value={resizeDimensions.w}
                                             onChange={(e) => setResizeDimensions(prev => ({ ...prev, w: parseInt(e.target.value) || 0 }))}
                                             size="small"
+                                            sx={{ width: 100 }}
                                         />
                                         <TextField
                                             label="Height"
@@ -588,25 +796,80 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
                                             value={resizeDimensions.h}
                                             onChange={(e) => setResizeDimensions(prev => ({ ...prev, h: parseInt(e.target.value) || 0 }))}
                                             size="small"
+                                            sx={{ width: 100 }}
+                                        />
+                                        <Button variant="contained" onClick={handleApplyResize}>
+                                            Apply Resize
+                                        </Button>
+                                    </Box>
+                                )}
+
+                                {editMode === 'flip' && (
+                                    <Box sx={{ display: 'flex', gap: 2 }}>
+                                        <Button variant="contained" onClick={() => handleApplyFlip(true)}>
+                                            Flip Horizontal
+                                        </Button>
+                                        <Button variant="contained" onClick={() => handleApplyFlip(false)}>
+                                            Flip Vertical
+                                        </Button>
+                                    </Box>
+                                )}
+                            </Box>
+
+                            {editMode === 'crop' && (
+                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                                    Click and drag on the canvas to select crop area. Use zoom controls for precision.
+                                </Typography>
+                            )}
+                        </Box>
+
+                        {/* Canvas area */}
+                        <Box sx={{
+                            flexGrow: 1,
+                            overflow: 'auto',
+                            bgcolor: '#2b2b2b',
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            justifyContent: 'flex-start',
+                            p: 2
+                        }}>
+                            {selectedSprite && sprites.find(s => s.name === selectedSprite) && (() => {
+                                const sprite = sprites.find(s => s.name === selectedSprite)!;
+                                const scaledWidth = sprite.w * canvasZoom;
+                                const scaledHeight = sprite.h * canvasZoom;
+
+                                return (
+                                    <Box sx={{
+                                        width: scaledWidth,
+                                        height: scaledHeight,
+                                        minWidth: scaledWidth,
+                                        minHeight: scaledHeight,
+                                        position: 'relative',
+                                        boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+                                        margin: 'auto'
+                                    }}>
+                                        <canvas
+                                            ref={canvasRef}
+                                            width={sprite.w}
+                                            height={sprite.h}
+                                            onMouseDown={handleCanvasMouseDown}
+                                            onMouseMove={handleCanvasMouseMove}
+                                            onMouseUp={handleCanvasMouseUp}
+                                            style={{
+                                                border: '2px solid #555',
+                                                cursor: editMode === 'crop' ? 'crosshair' : 'default',
+                                                transform: `scale(${canvasZoom})`,
+                                                transformOrigin: 'top left',
+                                                display: 'block',
+                                                backgroundColor: '#1a1a1a',
+                                                width: sprite.w,
+                                                height: sprite.h
+                                            }}
                                         />
                                     </Box>
-                                    <Button variant="contained" onClick={handleApplyResize}>
-                                        Apply Resize
-                                    </Button>
-                                </Box>
-                            )}
-
-                            {editMode === 'flip' && (
-                                <Box sx={{ display: 'flex', gap: 2 }}>
-                                    <Button variant="contained" onClick={() => handleApplyFlip(true)}>
-                                        Flip Horizontal
-                                    </Button>
-                                    <Button variant="contained" onClick={() => handleApplyFlip(false)}>
-                                        Flip Vertical
-                                    </Button>
-                                </Box>
-                            )}
-                        </Paper>
+                                );
+                            })()}
+                        </Box>
                     </Box>
                 )}
             </Box>
@@ -649,6 +912,23 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
                     }
                 >
                     {pendingChanges.size} sprite{pendingChanges.size !== 1 ? 's' : ''} changed externally
+                </Alert>
+            </Snackbar>
+
+            {/* General Notifications */}
+            <Snackbar
+                open={notification.open}
+                autoHideDuration={6000}
+                onClose={() => setNotification({ ...notification, open: false })}
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+            >
+                <Alert
+                    onClose={() => setNotification({ ...notification, open: false })}
+                    severity={notification.severity}
+                    variant="filled"
+                    sx={{ width: '100%' }}
+                >
+                    {notification.message}
                 </Alert>
             </Snackbar>
         </Box>
@@ -780,7 +1060,7 @@ interface ReplaceDialogProps {
     spriteName: string | null;
     jsonContent: NitroJSON;
     imageContent: string | null;
-    onUpdate: (newJson: NitroJSON) => void;
+    onUpdate: (newJson: NitroJSON, newImage?: string) => void;
 }
 
 const ReplaceDialog: React.FC<ReplaceDialogProps> = ({ open, onClose, spriteName, jsonContent, imageContent, onUpdate }) => {
@@ -797,15 +1077,33 @@ const ReplaceDialog: React.FC<ReplaceDialogProps> = ({ open, onClose, spriteName
         return files;
     };
 
-    const processBackendResponse = (files: { [key: string]: number[] }): { jsonContent: NitroJSON; imageContent: string } => {
+    const processBackendResponse = (files: { [key: string]: number[] | string }): { jsonContent: NitroJSON; imageContent: string } => {
         const jsonFileName = Object.keys(files).find(name => name.endsWith('.json'));
         if (!jsonFileName) throw new Error('No JSON file in response');
-        const jsonBytes = new Uint8Array(files[jsonFileName]);
+
+        // Handle both base64 strings and number arrays from Wails
+        const jsonData = files[jsonFileName];
+        let jsonBytes: Uint8Array;
+
+        if (typeof jsonData === 'string') {
+            jsonBytes = Uint8Array.from(atob(jsonData), c => c.charCodeAt(0));
+        } else {
+            jsonBytes = new Uint8Array(jsonData);
+        }
+
         const jsonStr = new TextDecoder().decode(jsonBytes);
         const jsonContent = JSON.parse(jsonStr);
         const pngFileName = jsonContent.spritesheet.meta.image;
-        const pngBytes = new Uint8Array(files[pngFileName]);
-        const imageContent = btoa(String.fromCharCode(...pngBytes));
+        const pngData = files[pngFileName];
+
+        let imageContent: string;
+        if (typeof pngData === 'string') {
+            imageContent = pngData;
+        } else {
+            const pngBytes = new Uint8Array(pngData);
+            imageContent = btoa(String.fromCharCode(...pngBytes));
+        }
+
         return { jsonContent, imageContent };
     };
 
@@ -831,13 +1129,13 @@ const ReplaceDialog: React.FC<ReplaceDialogProps> = ({ open, onClose, spriteName
 
                 if (replaceType === 'single' && spriteName) {
                     const result = await ReplaceSingleSprite(files, spriteName, base64Data);
-                    const { jsonContent: newJson } = processBackendResponse(result);
-                    onUpdate(newJson);
+                    const { jsonContent: newJson, imageContent: newImage } = processBackendResponse(result);
+                    onUpdate(newJson, newImage);
                     console.log(`Replaced sprite "${spriteName}"`);
                 } else {
                     const result = await ReplaceEntireSpritesheet(files, base64Data);
-                    const { jsonContent: newJson } = processBackendResponse(result);
-                    onUpdate(newJson);
+                    const { jsonContent: newJson, imageContent: newImage } = processBackendResponse(result);
+                    onUpdate(newJson, newImage);
                     console.log('Replaced entire spritesheet');
                 }
 

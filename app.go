@@ -872,6 +872,16 @@ func (a *App) ReplaceSingleSprite(files map[string][]byte, spriteName string, ne
 		return nil, fmt.Errorf("failed to encode JSON: %w", err)
 	}
 
+	// Debug logging
+	fmt.Printf("[ReplaceSingleSprite] JSON file name: %s\n", jsonFileName)
+	fmt.Printf("[ReplaceSingleSprite] Marshaled JSON length: %d bytes\n", len(updatedJSON))
+	if len(updatedJSON) > 0 {
+		fmt.Printf("[ReplaceSingleSprite] First 100 chars of JSON: %s\n", string(updatedJSON[:min(100, len(updatedJSON))]))
+	} else {
+		fmt.Printf("[ReplaceSingleSprite] WARNING: Marshaled JSON is empty!\n")
+	}
+	fmt.Printf("[ReplaceSingleSprite] Spritesheet buffer size: %d bytes\n", spritesheetBuf.Len())
+
 	// Create updated files map
 	updatedFiles := make(map[string][]byte)
 	for name, data := range files {
@@ -879,6 +889,12 @@ func (a *App) ReplaceSingleSprite(files map[string][]byte, spriteName string, ne
 	}
 	updatedFiles[spritesheetName] = spritesheetBuf.Bytes()
 	updatedFiles[jsonFileName] = updatedJSON
+
+	// Debug logging for final map
+	fmt.Printf("[ReplaceSingleSprite] Returning %d files\n", len(updatedFiles))
+	for name, data := range updatedFiles {
+		fmt.Printf("[ReplaceSingleSprite]   %s: %d bytes\n", name, len(data))
+	}
 
 	return updatedFiles, nil
 }

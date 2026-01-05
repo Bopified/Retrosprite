@@ -754,7 +754,7 @@ function App() {
         setIsDirty(false); // Switching files resets dirtyness of the VIEW (not necessarily the project, but we are simple for now)
     };
 
-    const handleJsonUpdate = (newJson: NitroJSON) => {
+    const handleJsonUpdate = (newJson: NitroJSON, newImage?: string) => {
         const newJsonString = JSON.stringify(newJson, null, 4);
         // Only set dirty if content actually changed
         if (newJsonString !== fileContent) {
@@ -763,13 +763,23 @@ function App() {
         }
 
         if (selectedProject && selectedFile) {
+            const updates: Record<string, string> = {
+                [selectedFile]: encodeContent(newJsonString)
+            };
+
+            // If a new image is provided, update it as well
+            if (newImage && newJson.spritesheet?.meta?.image) {
+                const imageName = newJson.spritesheet.meta.image;
+                updates[imageName] = newImage;
+            }
+
             setProjects(prev => ({
                 ...prev,
                 [selectedProject]: {
                     ...prev[selectedProject],
                     files: {
                         ...prev[selectedProject].files,
-                        [selectedFile]: encodeContent(newJsonString)
+                        ...updates
                     }
                 }
             }));
