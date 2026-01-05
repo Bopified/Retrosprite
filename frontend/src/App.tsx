@@ -31,7 +31,7 @@ import Tooltip from '@mui/material/Tooltip';
 
 import { SpriteEditor } from './components/SpriteEditor';
 import { AssetEditor } from './components/AssetEditor';
-import { VisualizationEditor } from './components/VisualizationEditor';
+import { LayersEditor } from './components/LayersEditor';
 import { FurniturePreview } from './components/FurniturePreview';
 import { FileExplorer } from './components/FileExplorer';
 import { FurnitureSettings } from './components/FurnitureSettings';
@@ -1206,7 +1206,7 @@ function App() {
                                                     <Tab label="Positions (Assets)" icon={<OpenWithIcon fontSize="small" />} iconPosition="start" sx={{ minHeight: 48 }} />
                                                 )}
                                                 {parsedJson?.visualizations && (
-                                                    <Tab label="Visualizations" icon={<LayersIcon fontSize="small" />} iconPosition="start" sx={{ minHeight: 48 }} />
+                                                    <Tab label="Layers" icon={<LayersIcon fontSize="small" />} iconPosition="start" sx={{ minHeight: 48 }} />
                                                 )}
                                                 {parsedJson?.spritesheet && (
                                                     <Tab label="Images (Raw)" icon={<PhotoIcon fontSize="small" />} iconPosition="start" sx={{ minHeight: 48 }} />
@@ -1342,6 +1342,8 @@ function App() {
                                                             jsonContent={parsedJson}
                                                             onUpdate={handleJsonUpdate}
                                                             images={currentProjectFiles}
+                                                            avatarTesting={avatarTestingState}
+                                                            onAvatarTestingChange={setAvatarTestingState}
                                                         />
                                                     )}
                                                 </Box>
@@ -1349,7 +1351,7 @@ function App() {
                                                 {parsedJson?.visualizations && (
                                                     <Box role="tabpanel" hidden={tabIndex !== 5} sx={{ height: '100%', width: '100%' }}>
                                                         {tabIndex === 5 && (
-                                                            <VisualizationEditor
+                                                            <LayersEditor
                                                                 jsonContent={parsedJson}
                                                                 onUpdate={handleJsonUpdate}
                                                             />

@@ -40,6 +40,7 @@ export interface NitroLayer {
     ink?: string;
     ignoreMouse?: boolean;
     alpha?: number;
+    tag?: string;
 }
 
 export interface NitroAnimationLayer {
