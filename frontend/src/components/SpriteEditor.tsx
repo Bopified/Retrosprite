@@ -1,250 +1,909 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Box, Paper, Typography, TextField, Button } from '@mui/material';
-import CenterFocusStrongIcon from '@mui/icons-material/CenterFocusStrong';
-import type { NitroJSON, NitroFrame } from '../types';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import {
+    Box, Paper, Typography, TextField, Button, IconButton, FormControl, InputLabel,
+    Select, MenuItem, Dialog, DialogTitle, DialogContent, DialogActions, Checkbox,
+    FormControlLabel, Radio, RadioGroup, Snackbar, Alert, Toolbar, CircularProgress
+} from '@mui/material';
+import SearchIcon from '@mui/icons-material/Search';
+import CloseIcon from '@mui/icons-material/Close';
+import ImageIcon from '@mui/icons-material/Image';
+import FolderIcon from '@mui/icons-material/Folder';
+import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
+import CropIcon from '@mui/icons-material/Crop';
+import AspectRatioIcon from '@mui/icons-material/AspectRatio';
+import FlipIcon from '@mui/icons-material/Flip';
+import type { NitroJSON } from '../types';
+import {
+    GenerateSpriteThumbnails,
+    ExtractMultipleSprites,
+    ExtractSpritesheet,
+    ReplaceSingleSprite,
+    ReplaceEntireSpritesheet,
+    ReadExternalFile,
+    CropSprite,
+    ResizeSprite,
+    FlipSprite
+} from '../wailsjs/go/main/App';
+
+interface SpriteInfo {
+    name: string;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    thumbnail: string;
+}
 
 interface SpriteEditorProps {
     jsonContent: NitroJSON;
-    imageContent: string | null; // Base64 of the image
+    imageContent: string | null;
     onUpdate: (newJson: NitroJSON) => void;
 }
 
-export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageContent, onUpdate }) => {
-    const [selectedFrameKey, setSelectedFrameKey] = useState<string | null>(null);
-    const [scale, setScale] = useState(1);
-    const [pan, setPan] = useState({ x: 0, y: 0 });
-    const imageRef = useRef<HTMLImageElement>(null);
-    const isPanning = useRef(false);
-    const lastMousePos = useRef({ x: 0, y: 0 });
-    const containerRef = useRef<HTMLDivElement>(null);
+type ViewMode = 'gallery' | 'edit';
+type EditMode = 'crop' | 'resize' | 'flip' | null;
 
-    // If no spritesheet data, render nothing or warning
+export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageContent, onUpdate }) => {
+    // Gallery state
+    const [sprites, setSprites] = useState<SpriteInfo[]>([]);
+    const [filteredSprites, setFilteredSprites] = useState<SpriteInfo[]>([]);
+    const [selectedSprites, setSelectedSprites] = useState<string[]>([]);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [layerFilter, setLayerFilter] = useState<string | null>(null);
+    const [loading, setLoading] = useState(false);
+
+    // View state
+    const [viewMode, setViewMode] = useState<ViewMode>('gallery');
+    const [selectedSprite, setSelectedSprite] = useState<string | null>(null);
+
+    // Dialog state
+    const [extractDialogOpen, setExtractDialogOpen] = useState(false);
+    const [replaceDialogOpen, setReplaceDialogOpen] = useState(false);
+
+    // File watching state
+    const [pendingChanges, setPendingChanges] = useState<Map<string, string>>(new Map());
+
+    // In-app editing state
+    const [editMode, setEditMode] = useState<EditMode>(null);
+    const [cropRect, setCropRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+    const [resizeDimensions, setResizeDimensions] = useState<{ w: number; h: number }>({ w: 64, h: 64 });
+    const [isCropping, setIsCropping] = useState(false);
+    const cropStartRef = useRef<{ x: number; y: number } | null>(null);
+
+    // Canvas ref for editing
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+
+    // Load thumbnails on mount
+    useEffect(() => {
+        const loadThumbnails = async () => {
+            if (!jsonContent || !imageContent) return;
+
+            setLoading(true);
+            try {
+                const files = prepareFilesForBackend(jsonContent, imageContent);
+                const thumbnails = await GenerateSpriteThumbnails(files);
+                setSprites(thumbnails);
+                setFilteredSprites(thumbnails);
+            } catch (error) {
+                console.error('Failed to generate thumbnails:', error);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        loadThumbnails();
+    }, [jsonContent, imageContent]);
+
+    // Filter sprites when search/layer changes
+    useEffect(() => {
+        const filtered = sprites.filter(sprite => {
+            const matchesQuery = sprite.name.toLowerCase().includes(searchQuery.toLowerCase());
+
+            // Extract layer from sprite name: {name}_{size}_{layer}_{direction}_{frame}
+            const parts = sprite.name.split('_');
+            const spriteLayer = parts.length >= 3 ? parts[parts.length - 3] : '';
+            const matchesLayer = !layerFilter || spriteLayer === layerFilter;
+
+            return matchesQuery && matchesLayer;
+        });
+        setFilteredSprites(filtered);
+    }, [searchQuery, layerFilter, sprites]);
+
+    // Listen for file watcher events
+    useEffect(() => {
+        const handleSpriteChanged = (event: Event) => {
+            const customEvent = event as CustomEvent;
+            const { spriteName, filePath } = customEvent.detail;
+
+            setPendingChanges(prev => new Map(prev).set(spriteName, filePath));
+        };
+
+        window.addEventListener('sprite-file-changed', handleSpriteChanged as EventListener);
+        return () => window.removeEventListener('sprite-file-changed', handleSpriteChanged as EventListener);
+    }, []);
+
+    // Draw sprite on canvas for editing
+    useEffect(() => {
+        if (viewMode !== 'edit' || !selectedSprite || !canvasRef.current) return;
+
+        const sprite = sprites.find(s => s.name === selectedSprite);
+        if (!sprite) return;
+
+        const ctx = canvasRef.current.getContext('2d');
+        if (!ctx) return;
+
+        const img = new Image();
+        img.onload = () => {
+            ctx.clearRect(0, 0, canvasRef.current!.width, canvasRef.current!.height);
+            ctx.drawImage(img, 0, 0);
+
+            // Draw crop overlay if in crop mode
+            if (editMode === 'crop' && cropRect) {
+                ctx.strokeStyle = '#00ff00';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(cropRect.x, cropRect.y, cropRect.w, cropRect.h);
+            }
+        };
+        img.src = `data:image/png;base64,${sprite.thumbnail}`;
+    }, [viewMode, selectedSprite, editMode, cropRect, sprites]);
+
+    // Helper functions
+    const prepareFilesForBackend = (json: NitroJSON, image: string): { [key: string]: number[] } => {
+        const files: { [key: string]: number[] } = {};
+
+        const jsonStr = JSON.stringify(json);
+        const jsonBytes = new TextEncoder().encode(jsonStr);
+        files[json.name + '.json'] = Array.from(jsonBytes);
+
+        const pngBytes = Uint8Array.from(atob(image), c => c.charCodeAt(0));
+        files[json.spritesheet!.meta.image] = Array.from(pngBytes);
+
+        return files;
+    };
+
+    const processBackendResponse = (files: { [key: string]: number[] }): { jsonContent: NitroJSON; imageContent: string } => {
+        const jsonFileName = Object.keys(files).find(name => name.endsWith('.json'));
+        if (!jsonFileName) throw new Error('No JSON file in response');
+
+        const jsonBytes = new Uint8Array(files[jsonFileName]);
+        const jsonStr = new TextDecoder().decode(jsonBytes);
+        const jsonContent = JSON.parse(jsonStr);
+
+        const pngFileName = jsonContent.spritesheet.meta.image;
+        const pngBytes = new Uint8Array(files[pngFileName]);
+        const imageContent = btoa(String.fromCharCode(...pngBytes));
+
+        return { jsonContent, imageContent };
+    };
+
+    const extractLayer = (spriteName: string): string => {
+        const parts = spriteName.split('_');
+        return parts.length >= 3 ? parts[parts.length - 3] : 'unknown';
+    };
+
+    const availableLayers = useMemo(() => {
+        const layers = new Set<string>();
+        sprites.forEach(sprite => {
+            layers.add(extractLayer(sprite.name));
+        });
+        return Array.from(layers).sort();
+    }, [sprites]);
+
+    // Event handlers
+    const handleSpriteSelect = (spriteName: string) => {
+        if (selectedSprites.includes(spriteName)) {
+            setSelectedSprites(selectedSprites.filter(s => s !== spriteName));
+        } else {
+            setSelectedSprites([...selectedSprites, spriteName]);
+        }
+    };
+
+    const handleExtractClick = () => {
+        setExtractDialogOpen(true);
+    };
+
+    const handleReplaceClick = () => {
+        if (selectedSprites.length === 1) {
+            setSelectedSprite(selectedSprites[0]);
+        }
+        setReplaceDialogOpen(true);
+    };
+
+    const handleEditClick = () => {
+        if (selectedSprites.length === 1) {
+            setSelectedSprite(selectedSprites[0]);
+            const sprite = sprites.find(s => s.name === selectedSprites[0]);
+            if (sprite) {
+                setResizeDimensions({ w: sprite.w, h: sprite.h });
+            }
+            setViewMode('edit');
+        }
+    };
+
+    const handleReloadExternalChanges = async () => {
+        for (const [spriteName, filePath] of pendingChanges) {
+            try {
+                const fileData = await ReadExternalFile(filePath);
+                const files = prepareFilesForBackend(jsonContent, imageContent!);
+                const result = await ReplaceSingleSprite(files, spriteName, fileData);
+
+                const { jsonContent: newJson } = processBackendResponse(result);
+                onUpdate(newJson);
+            } catch (error) {
+                console.error(`Failed to reload ${spriteName}:`, error);
+            }
+        }
+
+        setPendingChanges(new Map());
+    };
+
+    // Canvas mouse handlers for crop
+    const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+        if (editMode !== 'crop') return;
+
+        const rect = canvasRef.current!.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        cropStartRef.current = { x, y };
+        setCropRect({ x, y, w: 0, h: 0 });
+        setIsCropping(true);
+    };
+
+    const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+        if (editMode !== 'crop' || !isCropping || !cropStartRef.current) return;
+
+        const rect = canvasRef.current!.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        setCropRect({
+            x: Math.min(cropStartRef.current.x, x),
+            y: Math.min(cropStartRef.current.y, y),
+            w: Math.abs(x - cropStartRef.current.x),
+            h: Math.abs(y - cropStartRef.current.y)
+        });
+    };
+
+    const handleCanvasMouseUp = () => {
+        setIsCropping(false);
+    };
+
+    const handleApplyCrop = async () => {
+        if (!cropRect || !selectedSprite) return;
+
+        try {
+            const files = prepareFilesForBackend(jsonContent, imageContent!);
+            const result = await CropSprite(files, selectedSprite, cropRect.x, cropRect.y, cropRect.w, cropRect.h);
+
+            const { jsonContent: newJson } = processBackendResponse(result);
+            onUpdate(newJson);
+            setViewMode('gallery');
+            setCropRect(null);
+        } catch (error) {
+            console.error('Failed to crop sprite:', error);
+        }
+    };
+
+    const handleApplyResize = async () => {
+        if (!selectedSprite) return;
+
+        try {
+            const files = prepareFilesForBackend(jsonContent, imageContent!);
+            const result = await ResizeSprite(files, selectedSprite, resizeDimensions.w, resizeDimensions.h);
+
+            const { jsonContent: newJson } = processBackendResponse(result);
+            onUpdate(newJson);
+            setViewMode('gallery');
+        } catch (error) {
+            console.error('Failed to resize sprite:', error);
+        }
+    };
+
+    const handleApplyFlip = async (horizontal: boolean) => {
+        if (!selectedSprite) return;
+
+        try {
+            const files = prepareFilesForBackend(jsonContent, imageContent!);
+            const result = await FlipSprite(files, selectedSprite, horizontal);
+
+            const { jsonContent: newJson } = processBackendResponse(result);
+            onUpdate(newJson);
+            setViewMode('gallery');
+        } catch (error) {
+            console.error('Failed to flip sprite:', error);
+        }
+    };
+
     if (!jsonContent.spritesheet) {
         return <Box p={2}>No spritesheet data found in this JSON.</Box>;
     }
 
-    const { frames } = jsonContent.spritesheet;
+    return (
+        <Box sx={{ display: 'flex', height: '100%', flexDirection: 'column' }}>
+            {/* Toolbar */}
+            <Toolbar sx={{ borderBottom: '1px solid #555', gap: 2 }}>
+                {viewMode === 'gallery' ? (
+                    <>
+                        <Typography variant="h6">Sprites ({filteredSprites.length})</Typography>
+                        <Button
+                            variant="contained"
+                            startIcon={<ImageIcon />}
+                            onClick={handleExtractClick}
+                            disabled={selectedSprites.length === 0}
+                        >
+                            Extract
+                        </Button>
+                        <Button
+                            variant="contained"
+                            startIcon={<SwapHorizIcon />}
+                            onClick={handleReplaceClick}
+                            disabled={selectedSprites.length !== 1}
+                        >
+                            Replace
+                        </Button>
+                        <Button
+                            variant="contained"
+                            startIcon={<CropIcon />}
+                            onClick={handleEditClick}
+                            disabled={selectedSprites.length !== 1}
+                        >
+                            Edit
+                        </Button>
+                        <Box sx={{ flexGrow: 1 }} />
+                        <Typography variant="caption" color="text.secondary">
+                            {selectedSprites.length} selected
+                        </Typography>
+                    </>
+                ) : (
+                    <>
+                        <Typography variant="h6">Editing: {selectedSprite}</Typography>
+                        <Box sx={{ flexGrow: 1 }} />
+                        <Button onClick={() => setViewMode('gallery')}>
+                            Back to Gallery
+                        </Button>
+                    </>
+                )}
+            </Toolbar>
 
-    // Center image on mount or when image changes
-    useEffect(() => {
-        if (containerRef.current && imageRef.current) {
-            setPan({ x: 0, y: 0 });
-        }
-    }, [imageContent]);
+            {/* Main content */}
+            <Box sx={{ display: 'flex', flexGrow: 1, overflow: 'hidden' }}>
+                {viewMode === 'gallery' ? (
+                    <>
+                        {/* Gallery view */}
+                        <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                            {/* Search bar */}
+                            <Box sx={{ display: 'flex', gap: 2, p: 2, borderBottom: '1px solid #555' }}>
+                                <TextField
+                                    placeholder="Search sprites..."
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    size="small"
+                                    InputProps={{
+                                        startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />,
+                                    }}
+                                    sx={{ flexGrow: 1 }}
+                                />
 
-    // Handle Wheel via ref for non-passive listener to prevent browser zoom
-    useEffect(() => {
-        const container = containerRef.current;
-        if (!container) return;
+                                <FormControl size="small" sx={{ minWidth: 150 }}>
+                                    <InputLabel>Layer</InputLabel>
+                                    <Select
+                                        value={layerFilter || ''}
+                                        onChange={(e) => setLayerFilter(e.target.value || null)}
+                                        label="Layer"
+                                    >
+                                        <MenuItem value="">All Layers</MenuItem>
+                                        {availableLayers.map(layer => (
+                                            <MenuItem key={layer} value={layer}>{layer.toUpperCase()}</MenuItem>
+                                        ))}
+                                    </Select>
+                                </FormControl>
+                            </Box>
 
-        const onWheel = (e: WheelEvent) => {
-            if (e.ctrlKey) {
-                e.preventDefault();
-                const delta = e.deltaY > 0 ? -0.1 : 0.1;
-                setScale(s => Math.max(0.1, Math.min(10, s + delta)));
+                            {/* Sprite gallery */}
+                            {loading ? (
+                                <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flexGrow: 1 }}>
+                                    <CircularProgress />
+                                </Box>
+                            ) : (
+                                <Box sx={{
+                                    display: 'grid',
+                                    gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
+                                    gap: 2,
+                                    p: 2,
+                                    overflow: 'auto'
+                                }}>
+                                    {filteredSprites.map(sprite => (
+                                        <Paper
+                                            key={sprite.name}
+                                            sx={{
+                                                p: 1,
+                                                cursor: 'pointer',
+                                                border: selectedSprites.includes(sprite.name) ? '2px solid #90caf9' : 'none',
+                                                bgcolor: selectedSprites.includes(sprite.name) ? 'rgba(144, 202, 249, 0.1)' : 'background.paper',
+                                                '&:hover': { bgcolor: 'rgba(255, 255, 255, 0.05)' }
+                                            }}
+                                            onClick={() => handleSpriteSelect(sprite.name)}
+                                        >
+                                            <Box sx={{
+                                                width: '100%',
+                                                height: 100,
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                bgcolor: '#333',
+                                                backgroundImage: 'linear-gradient(45deg, #444 25%, transparent 25%), linear-gradient(-45deg, #444 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #444 75%), linear-gradient(-45deg, transparent 75%, #444 75%)',
+                                                backgroundSize: '20px 20px',
+                                                backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px',
+                                            }}>
+                                                <img
+                                                    src={`data:image/png;base64,${sprite.thumbnail}`}
+                                                    alt={sprite.name}
+                                                    style={{ maxWidth: '100%', maxHeight: '100%' }}
+                                                />
+                                            </Box>
+
+                                            <Typography
+                                                variant="caption"
+                                                sx={{
+                                                    display: 'block',
+                                                    mt: 1,
+                                                    fontSize: '0.7rem',
+                                                    overflow: 'hidden',
+                                                    textOverflow: 'ellipsis',
+                                                    whiteSpace: 'nowrap'
+                                                }}
+                                                title={sprite.name}
+                                            >
+                                                {sprite.name}
+                                            </Typography>
+
+                                            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem' }}>
+                                                {sprite.w}x{sprite.h}
+                                            </Typography>
+                                        </Paper>
+                                    ))}
+                                </Box>
+                            )}
+                        </Box>
+
+                        {/* Inspector sidebar */}
+                        <Paper sx={{ width: 300, p: 2, display: 'flex', flexDirection: 'column', borderLeft: '1px solid #555' }}>
+                            <Typography variant="h6" gutterBottom>Inspector</Typography>
+
+                            {selectedSprites.length === 1 ? (
+                                <>
+                                    {(() => {
+                                        const sprite = sprites.find(s => s.name === selectedSprites[0]);
+                                        if (!sprite) return null;
+
+                                        return (
+                                            <>
+                                                <Typography variant="subtitle2" sx={{ mb: 2, wordBreak: 'break-all', fontSize: '0.8rem', bgcolor: 'rgba(255,255,255,0.05)', p: 1, borderRadius: 1 }}>
+                                                    {sprite.name}
+                                                </Typography>
+
+                                                <Box sx={{ mb: 2 }}>
+                                                    <Typography variant="caption" color="text.secondary">Position:</Typography>
+                                                    <Typography variant="body2">{sprite.x}, {sprite.y}</Typography>
+                                                </Box>
+
+                                                <Box sx={{ mb: 2 }}>
+                                                    <Typography variant="caption" color="text.secondary">Dimensions:</Typography>
+                                                    <Typography variant="body2">{sprite.w} x {sprite.h}</Typography>
+                                                </Box>
+
+                                                <Box sx={{ mb: 2 }}>
+                                                    <Typography variant="caption" color="text.secondary">Layer:</Typography>
+                                                    <Typography variant="body2">{extractLayer(sprite.name).toUpperCase()}</Typography>
+                                                </Box>
+                                            </>
+                                        );
+                                    })()}
+                                </>
+                            ) : selectedSprites.length > 1 ? (
+                                <Typography color="text.secondary">{selectedSprites.length} sprites selected</Typography>
+                            ) : (
+                                <Typography color="text.secondary">Select a sprite to view details</Typography>
+                            )}
+                        </Paper>
+                    </>
+                ) : (
+                    /* Edit view */
+                    <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', p: 2, alignItems: 'center', justifyContent: 'center' }}>
+                        <Paper sx={{ p: 2, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                            {/* Edit mode selector */}
+                            <Box sx={{ display: 'flex', gap: 1 }}>
+                                <Button
+                                    variant={editMode === 'crop' ? 'contained' : 'outlined'}
+                                    startIcon={<CropIcon />}
+                                    onClick={() => setEditMode('crop')}
+                                >
+                                    Crop
+                                </Button>
+                                <Button
+                                    variant={editMode === 'resize' ? 'contained' : 'outlined'}
+                                    startIcon={<AspectRatioIcon />}
+                                    onClick={() => setEditMode('resize')}
+                                >
+                                    Resize
+                                </Button>
+                                <Button
+                                    variant={editMode === 'flip' ? 'contained' : 'outlined'}
+                                    startIcon={<FlipIcon />}
+                                    onClick={() => setEditMode('flip')}
+                                >
+                                    Flip
+                                </Button>
+                            </Box>
+
+                            {/* Canvas */}
+                            {selectedSprite && sprites.find(s => s.name === selectedSprite) && (
+                                <canvas
+                                    ref={canvasRef}
+                                    width={sprites.find(s => s.name === selectedSprite)!.w}
+                                    height={sprites.find(s => s.name === selectedSprite)!.h}
+                                    onMouseDown={handleCanvasMouseDown}
+                                    onMouseMove={handleCanvasMouseMove}
+                                    onMouseUp={handleCanvasMouseUp}
+                                    style={{
+                                        border: '1px solid #555',
+                                        cursor: editMode === 'crop' ? 'crosshair' : 'default',
+                                        maxWidth: '100%',
+                                        imageRendering: 'pixelated'
+                                    }}
+                                />
+                            )}
+
+                            {/* Edit controls based on mode */}
+                            {editMode === 'crop' && (
+                                <Box>
+                                    <Typography variant="caption" color="text.secondary" gutterBottom>
+                                        Click and drag on the canvas to select crop area
+                                    </Typography>
+                                    <Button
+                                        variant="contained"
+                                        onClick={handleApplyCrop}
+                                        disabled={!cropRect || cropRect.w === 0 || cropRect.h === 0}
+                                        sx={{ mt: 1 }}
+                                    >
+                                        Apply Crop
+                                    </Button>
+                                </Box>
+                            )}
+
+                            {editMode === 'resize' && (
+                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                    <Box sx={{ display: 'flex', gap: 2 }}>
+                                        <TextField
+                                            label="Width"
+                                            type="number"
+                                            value={resizeDimensions.w}
+                                            onChange={(e) => setResizeDimensions(prev => ({ ...prev, w: parseInt(e.target.value) || 0 }))}
+                                            size="small"
+                                        />
+                                        <TextField
+                                            label="Height"
+                                            type="number"
+                                            value={resizeDimensions.h}
+                                            onChange={(e) => setResizeDimensions(prev => ({ ...prev, h: parseInt(e.target.value) || 0 }))}
+                                            size="small"
+                                        />
+                                    </Box>
+                                    <Button variant="contained" onClick={handleApplyResize}>
+                                        Apply Resize
+                                    </Button>
+                                </Box>
+                            )}
+
+                            {editMode === 'flip' && (
+                                <Box sx={{ display: 'flex', gap: 2 }}>
+                                    <Button variant="contained" onClick={() => handleApplyFlip(true)}>
+                                        Flip Horizontal
+                                    </Button>
+                                    <Button variant="contained" onClick={() => handleApplyFlip(false)}>
+                                        Flip Vertical
+                                    </Button>
+                                </Box>
+                            )}
+                        </Paper>
+                    </Box>
+                )}
+            </Box>
+
+            {/* Extract Dialog */}
+            <ExtractDialog
+                open={extractDialogOpen}
+                onClose={() => setExtractDialogOpen(false)}
+                selectedSprites={selectedSprites}
+                jsonContent={jsonContent}
+                imageContent={imageContent}
+            />
+
+            {/* Replace Dialog */}
+            <ReplaceDialog
+                open={replaceDialogOpen}
+                onClose={() => setReplaceDialogOpen(false)}
+                spriteName={selectedSprite}
+                jsonContent={jsonContent}
+                imageContent={imageContent}
+                onUpdate={onUpdate}
+            />
+
+            {/* Watcher Notification */}
+            <Snackbar
+                open={pendingChanges.size > 0}
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+            >
+                <Alert
+                    severity="info"
+                    action={
+                        <>
+                            <Button color="inherit" size="small" onClick={handleReloadExternalChanges}>
+                                Reload
+                            </Button>
+                            <IconButton size="small" color="inherit" onClick={() => setPendingChanges(new Map())}>
+                                <CloseIcon />
+                            </IconButton>
+                        </>
+                    }
+                >
+                    {pendingChanges.size} sprite{pendingChanges.size !== 1 ? 's' : ''} changed externally
+                </Alert>
+            </Snackbar>
+        </Box>
+    );
+};
+
+// Extract Dialog Component
+interface ExtractDialogProps {
+    open: boolean;
+    onClose: () => void;
+    selectedSprites: string[];
+    jsonContent: NitroJSON;
+    imageContent: string | null;
+}
+
+const ExtractDialog: React.FC<ExtractDialogProps> = ({ open, onClose, selectedSprites, jsonContent, imageContent }) => {
+    const [organizeByLayer, setOrganizeByLayer] = useState(false);
+    const [extractAll, setExtractAll] = useState(false);
+    const [extractSpritesheet, setExtractSpritesheet] = useState(false);
+
+    const prepareFilesForBackend = (json: NitroJSON, image: string): { [key: string]: number[] } => {
+        const files: { [key: string]: number[] } = {};
+        const jsonStr = JSON.stringify(json);
+        const jsonBytes = new TextEncoder().encode(jsonStr);
+        files[json.name + '.json'] = Array.from(jsonBytes);
+        const pngBytes = Uint8Array.from(atob(image), c => c.charCodeAt(0));
+        files[json.spritesheet!.meta.image] = Array.from(pngBytes);
+        return files;
+    };
+
+    const handleExtract = async () => {
+        if (!imageContent) return;
+
+        try {
+            const files = prepareFilesForBackend(jsonContent, imageContent);
+
+            if (extractSpritesheet) {
+                const result = await ExtractSpritesheet(files);
+                console.log('Extracted spritesheet to:', result);
             } else {
-                // Optional: Prevent swipe navigation on trackpads if needed, but for now just pan
-                setPan(prev => ({ x: prev.x - e.deltaX, y: prev.y - e.deltaY }));
+                const result = await ExtractMultipleSprites(
+                    files,
+                    extractAll ? [] : selectedSprites,
+                    organizeByLayer
+                );
+
+                if (result.success) {
+                    console.log(`Extracted ${result.extractedCount} sprites to ${result.outputPath}`);
+                } else {
+                    console.error('Extraction completed with errors:', result.errors);
+                }
+            }
+
+            onClose();
+        } catch (error) {
+            console.error('Extraction failed:', error);
+        }
+    };
+
+    return (
+        <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+            <DialogTitle>Extract Sprites</DialogTitle>
+            <DialogContent>
+                <FormControlLabel
+                    control={
+                        <Checkbox
+                            checked={extractSpritesheet}
+                            onChange={(e) => setExtractSpritesheet(e.target.checked)}
+                        />
+                    }
+                    label="Extract entire spritesheet instead"
+                />
+
+                {!extractSpritesheet && (
+                    <>
+                        <FormControlLabel
+                            control={
+                                <Checkbox
+                                    checked={extractAll}
+                                    onChange={(e) => setExtractAll(e.target.checked)}
+                                />
+                            }
+                            label="Extract all sprites"
+                        />
+
+                        {!extractAll && (
+                            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                                Selected: {selectedSprites.length} sprite{selectedSprites.length !== 1 ? 's' : ''}
+                            </Typography>
+                        )}
+
+                        <FormControlLabel
+                            control={
+                                <Checkbox
+                                    checked={organizeByLayer}
+                                    onChange={(e) => setOrganizeByLayer(e.target.checked)}
+                                />
+                            }
+                            label="Organize into layer folders"
+                        />
+
+                        <Typography variant="caption" color="text.secondary">
+                            {organizeByLayer
+                                ? 'Sprites will be organized into folders by layer (a, b, c, etc.)'
+                                : 'All sprites will be saved in a single folder'
+                            }
+                        </Typography>
+                    </>
+                )}
+            </DialogContent>
+            <DialogActions>
+                <Button onClick={onClose}>Cancel</Button>
+                <Button
+                    onClick={handleExtract}
+                    variant="contained"
+                    disabled={!extractSpritesheet && !extractAll && selectedSprites.length === 0}
+                >
+                    Extract
+                </Button>
+            </DialogActions>
+        </Dialog>
+    );
+};
+
+// Replace Dialog Component
+interface ReplaceDialogProps {
+    open: boolean;
+    onClose: () => void;
+    spriteName: string | null;
+    jsonContent: NitroJSON;
+    imageContent: string | null;
+    onUpdate: (newJson: NitroJSON) => void;
+}
+
+const ReplaceDialog: React.FC<ReplaceDialogProps> = ({ open, onClose, spriteName, jsonContent, imageContent, onUpdate }) => {
+    const [replaceType, setReplaceType] = useState<'single' | 'entire'>('single');
+    const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
+    const prepareFilesForBackend = (json: NitroJSON, image: string): { [key: string]: number[] } => {
+        const files: { [key: string]: number[] } = {};
+        const jsonStr = JSON.stringify(json);
+        const jsonBytes = new TextEncoder().encode(jsonStr);
+        files[json.name + '.json'] = Array.from(jsonBytes);
+        const pngBytes = Uint8Array.from(atob(image), c => c.charCodeAt(0));
+        files[json.spritesheet!.meta.image] = Array.from(pngBytes);
+        return files;
+    };
+
+    const processBackendResponse = (files: { [key: string]: number[] }): { jsonContent: NitroJSON; imageContent: string } => {
+        const jsonFileName = Object.keys(files).find(name => name.endsWith('.json'));
+        if (!jsonFileName) throw new Error('No JSON file in response');
+        const jsonBytes = new Uint8Array(files[jsonFileName]);
+        const jsonStr = new TextDecoder().decode(jsonBytes);
+        const jsonContent = JSON.parse(jsonStr);
+        const pngFileName = jsonContent.spritesheet.meta.image;
+        const pngBytes = new Uint8Array(files[pngFileName]);
+        const imageContent = btoa(String.fromCharCode(...pngBytes));
+        return { jsonContent, imageContent };
+    };
+
+    const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (file && file.type === 'image/png') {
+            setSelectedFile(file);
+        } else {
+            console.error('Please select a PNG file');
+        }
+    };
+
+    const handleReplace = async () => {
+        if (!selectedFile || !imageContent) return;
+
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            const base64 = e.target?.result as string;
+            const base64Data = base64.split(',')[1];
+
+            try {
+                const files = prepareFilesForBackend(jsonContent, imageContent);
+
+                if (replaceType === 'single' && spriteName) {
+                    const result = await ReplaceSingleSprite(files, spriteName, base64Data);
+                    const { jsonContent: newJson } = processBackendResponse(result);
+                    onUpdate(newJson);
+                    console.log(`Replaced sprite "${spriteName}"`);
+                } else {
+                    const result = await ReplaceEntireSpritesheet(files, base64Data);
+                    const { jsonContent: newJson } = processBackendResponse(result);
+                    onUpdate(newJson);
+                    console.log('Replaced entire spritesheet');
+                }
+
+                onClose();
+                setSelectedFile(null);
+            } catch (error) {
+                console.error('Replacement failed:', error);
             }
         };
 
-        container.addEventListener('wheel', onWheel, { passive: false });
-
-        return () => {
-            container.removeEventListener('wheel', onWheel);
-        };
-    }, []);
-
-    const handleFrameClick = (key: string, e: React.MouseEvent) => {
-        e.stopPropagation();
-        setSelectedFrameKey(key);
+        reader.readAsDataURL(selectedFile);
     };
-
-    const handleMouseDown = (e: React.MouseEvent) => {
-        isPanning.current = true;
-        lastMousePos.current = { x: e.clientX, y: e.clientY };
-        setSelectedFrameKey(null); // Deselect on background click
-    };
-
-    const handleMouseMove = (e: React.MouseEvent) => {
-        if (!isPanning.current) return;
-
-        const dx = e.clientX - lastMousePos.current.x;
-        const dy = e.clientY - lastMousePos.current.y;
-
-        setPan(prev => ({ x: prev.x + dx, y: prev.y + dy }));
-        lastMousePos.current = { x: e.clientX, y: e.clientY };
-    };
-
-    const handleMouseUp = () => {
-        isPanning.current = false;
-    };
-
-    const handleMouseLeave = () => {
-        isPanning.current = false;
-    };
-
-    const resetView = () => {
-        setPan({ x: 0, y: 0 });
-        setScale(1);
-    };
-
-    const updateFrame = (field: keyof NitroFrame['frame'], value: number) => {
-        if (!selectedFrameKey || !jsonContent.spritesheet) return;
-
-        const newJson = { ...jsonContent };
-        const frameData = newJson.spritesheet!.frames[selectedFrameKey];
-
-        if (frameData) {
-            frameData.frame[field] = value;
-            onUpdate(newJson);
-        }
-    };
-
-    const selectedFrameData = selectedFrameKey ? frames[selectedFrameKey] : null;
 
     return (
-        <Box sx={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
-            {/* Visual Area */}
-            <Box
-                ref={containerRef}
-                sx={{
-                    flexGrow: 1,
-                    bgcolor: '#333',
-                    position: 'relative',
-                    overflow: 'hidden', // Changed from auto to hidden for manual panning
-                    cursor: isPanning.current ? 'grabbing' : 'grab',
-                    // Checkerboard background
-                    backgroundImage: 'linear-gradient(45deg, #444 25%, transparent 25%), linear-gradient(-45deg, #444 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #444 75%), linear-gradient(-45deg, transparent 75%, #444 75%)',
-                    backgroundSize: '20px 20px',
-                    backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px',
-                    backgroundColor: '#333'
-                }}
-                onMouseDown={handleMouseDown}
-                onMouseMove={handleMouseMove}
-                onMouseUp={handleMouseUp}
-                onMouseLeave={handleMouseLeave}
-            >
-                {imageContent ? (
-                    <div style={{
-                        position: 'absolute',
-                        left: '50%',
-                        top: '50%',
-                        transform: `translate(calc(-50% + ${pan.x}px), calc(-50% + ${pan.y}px)) scale(${scale})`,
-                        transformOrigin: 'center',
-                        transition: isPanning.current ? 'none' : 'transform 0.1s ease-out'
-                    }}>
-                        <img
-                            ref={imageRef}
-                            src={`data:image/png;base64,${imageContent}`}
-                            alt="Spritesheet"
-                            style={{ display: 'block', pointerEvents: 'none' }} // Disable pointer events on img so dragging works smoothly
-                            draggable={false}
-                        />
-                        {/* Overlay Boxes */}
-                        {Object.entries(frames).map(([key, data]) => (
-                            <div
-                                key={key}
-                                onClick={(e) => handleFrameClick(key, e)}
-                                title={key}
-                                style={{
-                                    position: 'absolute',
-                                    left: data.frame.x,
-                                    top: data.frame.y,
-                                    width: data.frame.w,
-                                    height: data.frame.h,
-                                    border: selectedFrameKey === key ? '2px solid #00ff00' : '1px solid rgba(255, 255, 255, 0.5)',
-                                    backgroundColor: selectedFrameKey === key ? 'rgba(0, 255, 0, 0.2)' : 'transparent',
-                                    cursor: 'pointer',
-                                    boxSizing: 'border-box'
-                                }}
-                            />
-                        ))}
-                    </div>
-                ) : (
-                    <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
-                        <Typography color="error">Image file not found in bundle.</Typography>
-                    </Box>
-                )}
-
-                {/* Reset View Button Overlay */}
-                <Box sx={{ position: 'absolute', bottom: 16, right: 16 }}>
-                    <Button
-                        variant="contained"
-                        size="small"
-                        startIcon={<CenterFocusStrongIcon />}
-                        onClick={resetView}
-                        sx={{ opacity: 0.8, '&:hover': { opacity: 1 } }}
+        <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+            <DialogTitle>Replace Sprite</DialogTitle>
+            <DialogContent>
+                <FormControl component="fieldset" sx={{ mb: 2 }}>
+                    <RadioGroup
+                        value={replaceType}
+                        onChange={(e) => setReplaceType(e.target.value as any)}
                     >
-                        Reset View
-                    </Button>
-                </Box>
-            </Box>
+                        <FormControlLabel
+                            value="single"
+                            control={<Radio />}
+                            label={spriteName ? `Replace "${spriteName}" only` : 'Replace single sprite'}
+                        />
+                        <FormControlLabel
+                            value="entire"
+                            control={<Radio />}
+                            label="Replace entire spritesheet"
+                        />
+                    </RadioGroup>
+                </FormControl>
 
-            {/* Sidebar / Properties Panel */}
-            <Paper sx={{ width: 300, p: 2, display: 'flex', flexDirection: 'column', borderLeft: '1px solid #555', zIndex: 10 }}>
-                <Typography variant="h6" gutterBottom>Sprite Inspector</Typography>
+                <Button
+                    variant="outlined"
+                    component="label"
+                    fullWidth
+                    startIcon={<FolderIcon />}
+                >
+                    Select PNG File
+                    <input
+                        type="file"
+                        hidden
+                        accept="image/png"
+                        onChange={handleFileSelect}
+                    />
+                </Button>
 
-                <Box mb={2} display="flex" alignItems="center" justifyContent="space-between">
-                    <Typography>Zoom: {Math.round(scale * 100)}%</Typography>
-                    <Box>
-                        <Button size="small" onClick={() => setScale(s => Math.max(0.1, s - 0.1))} sx={{ minWidth: 30 }}>-</Button>
-                        <Button size="small" onClick={() => setScale(1)} sx={{ minWidth: 40 }}>1:1</Button>
-                        <Button size="small" onClick={() => setScale(s => Math.min(10, s + 0.1))} sx={{ minWidth: 30 }}>+</Button>
-                    </Box>
-                </Box>
-
-                <Typography variant="caption" color="text.secondary" paragraph>
-                    Hold Ctrl + Scroll to zoom. Drag to pan.
-                </Typography>
-
-                {selectedFrameData ? (
-                    <Box>
-                        <Typography variant="subtitle2" sx={{ mb: 2, wordBreak: 'break-all', fontSize: '0.8rem', bgcolor: 'rgba(255,255,255,0.05)', p: 1, borderRadius: 1 }}>
-                            {selectedFrameKey}
-                        </Typography>
-
-                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
-                            <Box sx={{ width: '45%' }}>
-                                <TextField
-                                    label="X" type="number" size="small" fullWidth
-                                    value={selectedFrameData.frame.x}
-                                    onChange={(e) => updateFrame('x', parseInt(e.target.value) || 0)}
-                                />
-                            </Box>
-                            <Box sx={{ width: '45%' }}>
-                                <TextField
-                                    label="Y" type="number" size="small" fullWidth
-                                    value={selectedFrameData.frame.y}
-                                    onChange={(e) => updateFrame('y', parseInt(e.target.value) || 0)}
-                                />
-                            </Box>
-                            <Box sx={{ width: '45%' }}>
-                                <TextField
-                                    label="W" type="number" size="small" fullWidth
-                                    value={selectedFrameData.frame.w}
-                                    onChange={(e) => updateFrame('w', parseInt(e.target.value) || 0)}
-                                />
-                            </Box>
-                            <Box sx={{ width: '45%' }}>
-                                <TextField
-                                    label="H" type="number" size="small" fullWidth
-                                    value={selectedFrameData.frame.h}
-                                    onChange={(e) => updateFrame('h', parseInt(e.target.value) || 0)}
-                                />
-                            </Box>
-                        </Box>
-
-                        <Box mt={2}>
-                            <Typography variant="caption" color="text.secondary">
-                                Adjusting these values updates the JSON definition.
-                            </Typography>
-                        </Box>
-                    </Box>
-                ) : (
-                    <Typography color="text.secondary">Select a sprite region to edit.</Typography>
+                {selectedFile && (
+                    <Typography variant="body2" sx={{ mt: 1 }}>
+                        Selected: {selectedFile.name}
+                    </Typography>
                 )}
-            </Paper>
-        </Box>
+            </DialogContent>
+            <DialogActions>
+                <Button onClick={onClose}>Cancel</Button>
+                <Button
+                    onClick={handleReplace}
+                    variant="contained"
+                    disabled={!selectedFile}
+                >
+                    Replace
+                </Button>
+            </DialogActions>
+        </Dialog>
     );
 };

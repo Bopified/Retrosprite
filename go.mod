@@ -2,7 +2,10 @@ module retrosprite
 
 go 1.25.4
 
-require github.com/wailsapp/wails/v2 v2.11.0
+require (
+	github.com/fsnotify/fsnotify v1.9.0
+	github.com/wailsapp/wails/v2 v2.11.0
+)
 
 require (
 	github.com/bep/debounce v1.2.1 // indirect

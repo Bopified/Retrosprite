@@ -6,7 +6,7 @@
   "frontend:dev:watcher": "npm run dev",
   "frontend:dir": "frontend",
   "wailsjsdir": "./frontend/src/wailsjs",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "author": {
     "name": "Bopified",
     "email": "Bopified@proton.me"
@@ -14,7 +14,7 @@
   "info": {
     "companyName": "Bopified",
     "productName": "Retrosprite",
-    "productVersion": "1.1.1",
+    "productVersion": "1.1.2",
     "copyright": "Copyright © 2026 Bopified",
     "comments": "Habbo Furniture Asset Editor"
   },

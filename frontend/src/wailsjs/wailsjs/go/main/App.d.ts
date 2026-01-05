@@ -8,7 +8,21 @@ export function CheckForUpdates():Promise<main.UpdateInfo>;
 
 export function ConvertSWF():Promise<main.NitroResponse>;
 
+export function CropSprite(arg1:Record<string, Array<number>>,arg2:string,arg3:number,arg4:number,arg5:number,arg6:number):Promise<Record<string, Array<number>>>;
+
+export function ExtractMultipleSprites(arg1:Record<string, Array<number>>,arg2:Array<string>,arg3:boolean):Promise<main.ExtractSpritesResult>;
+
+export function ExtractSingleSprite(arg1:Record<string, Array<number>>,arg2:string):Promise<string>;
+
+export function ExtractSpritesheet(arg1:Record<string, Array<number>>):Promise<string>;
+
+export function FlipSprite(arg1:Record<string, Array<number>>,arg2:string,arg3:boolean):Promise<Record<string, Array<number>>>;
+
+export function GenerateSpriteThumbnails(arg1:Record<string, Array<number>>):Promise<Array<main.SpriteInfo>>;
+
 export function GetCurrentVersion():Promise<string>;
+
+export function GetWatcherStatus():Promise<main.FileWatcherStatus>;
 
 export function LoadNitroFile(arg1:string):Promise<main.NitroResponse>;
 
@@ -18,7 +32,15 @@ export function OpenNitroFile():Promise<main.NitroResponse>;
 
 export function OpenProject():Promise<main.NitroResponse>;
 
+export function ReadExternalFile(arg1:string):Promise<string>;
+
 export function RenameNitroProject(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<main.NitroResponse>;
+
+export function ReplaceEntireSpritesheet(arg1:Record<string, Array<number>>,arg2:string):Promise<Record<string, Array<number>>>;
+
+export function ReplaceSingleSprite(arg1:Record<string, Array<number>>,arg2:string,arg3:string):Promise<Record<string, Array<number>>>;
+
+export function ResizeSprite(arg1:Record<string, Array<number>>,arg2:string,arg3:number,arg4:number):Promise<Record<string, Array<number>>>;
 
 export function SaveFileAs(arg1:string,arg2:string):Promise<string>;
 
@@ -27,3 +49,7 @@ export function SaveNitroFile(arg1:string,arg2:Record<string, Array<number>>,arg
 export function SaveProject(arg1:string,arg2:main.RsprProject,arg3:string):Promise<string>;
 
 export function SelectMultipleSWFFiles():Promise<Array<string>>;
+
+export function StartWatchingSpriteDirectory(arg1:string,arg2:Array<string>):Promise<void>;
+
+export function StopWatchingSpriteDirectory():Promise<void>;

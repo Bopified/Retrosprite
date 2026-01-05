@@ -19,6 +19,7 @@ import NorthWestIcon from '@mui/icons-material/NorthWest';
 import NorthEastIcon from '@mui/icons-material/NorthEast';
 import SouthWestIcon from '@mui/icons-material/SouthWest';
 import SouthEastIcon from '@mui/icons-material/SouthEast';
+import UndoIcon from '@mui/icons-material/Undo';
 import type { NitroJSON, NitroAsset, NitroLayer, AvatarTestingState } from '../types';
 import floorTile from '../assets/floor_tile.png';
 import centerTile from '../assets/center_tile.png';
@@ -85,6 +86,9 @@ export const AssetEditor: React.FC<AssetEditorProps> = ({
     const [scale, setScale] = useState(1);
     const [pan, setPan] = useState({ x: 0, y: 0 });
 
+    const [undoStack, setUndoStack] = useState<NitroJSON[]>([]);
+    const canUndo = undoStack.length > 0;
+
     useEffect(() => {
         setHiddenAssets(getInitialHiddenAssets(jsonContent.assets || {}));
     }, [jsonContent.name]);
@@ -99,6 +103,7 @@ export const AssetEditor: React.FC<AssetEditorProps> = ({
     const draggedAssetStartPos = useRef({ x: 0, y: 0 });
     const panStartPos = useRef({ x: 0, y: 0 });
     const panStartOffset = useRef({ x: 0, y: 0 });
+    const hasUndoSnapshot = useRef(false);
 
     const assets = jsonContent.assets || {};
     const assetKeys = Object.keys(assets).sort();
@@ -283,8 +288,24 @@ export const AssetEditor: React.FC<AssetEditorProps> = ({
         setHiddenAssets(newHidden);
     };
 
-    const updateAsset = (key: string, field: keyof NitroAsset, value: any) => {
+    const pushToUndoStack = () => {
+        setUndoStack(prev => [...prev, JSON.parse(JSON.stringify(jsonContent))]);
+    };
+
+    const performUndo = () => {
+        if (undoStack.length === 0) return;
+
+        const newStack = [...undoStack];
+        const previousState = newStack.pop()!;
+        setUndoStack(newStack);
+        onUpdate(previousState);
+    };
+
+    const updateAsset = (key: string, field: keyof NitroAsset, value: any, skipUndo = false) => {
         if (!jsonContent.assets) return;
+        if (!skipUndo) {
+            pushToUndoStack();
+        }
         const newJson = { ...jsonContent };
         const assetData = newJson.assets![key];
         if (assetData) {
@@ -295,6 +316,7 @@ export const AssetEditor: React.FC<AssetEditorProps> = ({
     };
 
     const updateLayer = (layerId: string, field: keyof NitroLayer, value: any) => {
+        pushToUndoStack();
         const newJson = { ...jsonContent };
         if (newJson.visualizations && mainViz) {
             const vizIndex = visualizations.indexOf(mainViz);
@@ -346,6 +368,11 @@ export const AssetEditor: React.FC<AssetEditorProps> = ({
         if (assetKey) {
             e.stopPropagation();
             setSelectedAssetKey(assetKey);
+
+            // Push to undo stack before starting drag
+            pushToUndoStack();
+            hasUndoSnapshot.current = true;
+
             isDraggingAsset.current = true;
             dragStartPos.current = { x: e.clientX, y: e.clientY };
 
@@ -371,8 +398,9 @@ export const AssetEditor: React.FC<AssetEditorProps> = ({
             const newX = Math.round(draggedAssetStartPos.current.x - appliedDx);
             const newY = Math.round(draggedAssetStartPos.current.y - dy);
 
-            updateAsset(selectedAssetKey, 'x', newX);
-            updateAsset(selectedAssetKey, 'y', newY);
+            // Skip undo during drag - we already pushed at the start
+            updateAsset(selectedAssetKey, 'x', newX, true);
+            updateAsset(selectedAssetKey, 'y', newY, true);
         } else if (isPanning.current) {
             const dx = e.clientX - panStartPos.current.x;
             const dy = e.clientY - panStartPos.current.y;
@@ -386,9 +414,15 @@ export const AssetEditor: React.FC<AssetEditorProps> = ({
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
-            if (!selectedAssetKey) return;
-
             if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+            if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+                e.preventDefault();
+                performUndo();
+                return;
+            }
+
+            if (!selectedAssetKey) return;
 
             const asset = assets[selectedAssetKey];
             if (!asset) return;
@@ -416,14 +450,16 @@ export const AssetEditor: React.FC<AssetEditorProps> = ({
 
             if (handled) {
                 e.preventDefault();
-                updateAsset(selectedAssetKey, 'x', newX);
-                updateAsset(selectedAssetKey, 'y', newY);
+                // Push to undo once before both updates
+                pushToUndoStack();
+                updateAsset(selectedAssetKey, 'x', newX, true);
+                updateAsset(selectedAssetKey, 'y', newY, true);
             }
         };
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [selectedAssetKey, assets, onUpdate]);
+    }, [selectedAssetKey, assets, onUpdate, undoStack]);
 
     const handleMouseUp = (e: React.MouseEvent) => {
         if (isPanning.current) {
@@ -435,6 +471,7 @@ export const AssetEditor: React.FC<AssetEditorProps> = ({
         }
         isDraggingAsset.current = false;
         isPanning.current = false;
+        hasUndoSnapshot.current = false;
     };
 
     // Avatar helpers
@@ -724,6 +761,20 @@ export const AssetEditor: React.FC<AssetEditorProps> = ({
                     >
                         Avatar
                     </Button>
+
+                    <Tooltip title="Undo (Ctrl+Z)">
+                        <span>
+                            <Button
+                                variant="outlined"
+                                size="small"
+                                startIcon={<UndoIcon />}
+                                onClick={performUndo}
+                                disabled={!canUndo}
+                            >
+                                Undo
+                            </Button>
+                        </span>
+                    </Tooltip>
 
                     <Box sx={{ ml: 'auto', display: 'flex', alignItems: 'center', gap: 1 }}>
                         <Typography variant="caption" sx={{ color: '#aaa', minWidth: 80 }}>

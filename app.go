@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
+	"image/color"
 	"image/png"
 	"net/http"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -34,7 +36,10 @@ type ProjectSettings struct {
 }
 
 type App struct {
-	ctx context.Context
+	ctx            context.Context
+	fileWatcher    *fsnotify.Watcher
+	watcherPath    string
+	watcherSprites map[string]string // spriteName -> filePath
 }
 
 func NewApp() *App {
@@ -369,6 +374,991 @@ func extractIconFromNitro(files map[string][]byte, furnitureName string) ([]byte
 	}
 
 	return iconBuf.Bytes(), nil
+}
+
+// resizeImage resizes an image to fit within maxSize x maxSize using nearest-neighbor scaling
+func resizeImage(src image.Image, maxSize int) image.Image {
+	srcBounds := src.Bounds()
+	srcW, srcH := srcBounds.Dx(), srcBounds.Dy()
+
+	// Calculate scale to fit in maxSize x maxSize
+	scale := float64(maxSize) / float64(max(srcW, srcH))
+	if scale >= 1.0 {
+		// Don't upscale, return original
+		return src
+	}
+
+	dstW := int(float64(srcW) * scale)
+	dstH := int(float64(srcH) * scale)
+
+	dst := image.NewRGBA(image.Rect(0, 0, dstW, dstH))
+
+	// Nearest-neighbor scaling for speed
+	for y := 0; y < dstH; y++ {
+		for x := 0; x < dstW; x++ {
+			srcX := int(float64(x) / scale)
+			srcY := int(float64(y) / scale)
+			dst.Set(x, y, src.At(srcX+srcBounds.Min.X, srcY+srcBounds.Min.Y))
+		}
+	}
+
+	return dst
+}
+
+// max returns the maximum of two integers
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// GenerateSpriteThumbnails creates thumbnails for all sprites in a project
+func (a *App) GenerateSpriteThumbnails(files map[string][]byte) ([]SpriteInfo, error) {
+	// Find the JSON file
+	var jsonData []byte
+	for name, data := range files {
+		if strings.HasSuffix(name, ".json") {
+			jsonData = data
+			break
+		}
+	}
+
+	if jsonData == nil {
+		return nil, fmt.Errorf("no JSON file found")
+	}
+
+	// Parse JSON to get spritesheet.frames
+	var assetData AssetData
+	if err := json.Unmarshal(jsonData, &assetData); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+
+	if assetData.Spritesheet == nil {
+		return nil, fmt.Errorf("no spritesheet data found")
+	}
+
+	// Get the spritesheet PNG
+	spritesheetName := assetData.Spritesheet.Meta.Image
+	spritesheetData, ok := files[spritesheetName]
+	if !ok {
+		return nil, fmt.Errorf("spritesheet image not found: %s", spritesheetName)
+	}
+
+	// Decode the PNG
+	img, err := png.Decode(bytes.NewReader(spritesheetData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode spritesheet PNG: %w", err)
+	}
+
+	// Generate thumbnails for each frame
+	sprites := make([]SpriteInfo, 0, len(assetData.Spritesheet.Frames))
+	for frameName, frame := range assetData.Spritesheet.Frames {
+		// Extract sprite region
+		spriteRect := image.Rect(
+			frame.Frame.X,
+			frame.Frame.Y,
+			frame.Frame.X+frame.Frame.W,
+			frame.Frame.Y+frame.Frame.H,
+		)
+
+		// Create image with just the sprite
+		spriteImg := image.NewRGBA(image.Rect(0, 0, frame.Frame.W, frame.Frame.H))
+		for y := spriteRect.Min.Y; y < spriteRect.Max.Y; y++ {
+			for x := spriteRect.Min.X; x < spriteRect.Max.X; x++ {
+				spriteImg.Set(x-spriteRect.Min.X, y-spriteRect.Min.Y, img.At(x, y))
+			}
+		}
+
+		// Resize to 64x64 thumbnail
+		thumbnailImg := resizeImage(spriteImg, 64)
+
+		// Encode as PNG
+		var thumbnailBuf bytes.Buffer
+		if err := png.Encode(&thumbnailBuf, thumbnailImg); err != nil {
+			return nil, fmt.Errorf("failed to encode thumbnail for %s: %w", frameName, err)
+		}
+
+		// Base64 encode
+		thumbnailBase64 := base64.StdEncoding.EncodeToString(thumbnailBuf.Bytes())
+
+		sprites = append(sprites, SpriteInfo{
+			Name:      frameName,
+			X:         frame.Frame.X,
+			Y:         frame.Frame.Y,
+			W:         frame.Frame.W,
+			H:         frame.Frame.H,
+			Thumbnail: thumbnailBase64,
+		})
+	}
+
+	return sprites, nil
+}
+
+// ExtractSingleSprite extracts one sprite and saves it to a user-selected location
+func (a *App) ExtractSingleSprite(files map[string][]byte, spriteName string) (string, error) {
+	// Find the JSON file
+	var jsonData []byte
+	for name, data := range files {
+		if strings.HasSuffix(name, ".json") {
+			jsonData = data
+			break
+		}
+	}
+
+	if jsonData == nil {
+		return "", fmt.Errorf("no JSON file found")
+	}
+
+	// Parse JSON
+	var assetData AssetData
+	if err := json.Unmarshal(jsonData, &assetData); err != nil {
+		return "", fmt.Errorf("failed to parse JSON: %w", err)
+	}
+
+	if assetData.Spritesheet == nil {
+		return "", fmt.Errorf("no spritesheet data found")
+	}
+
+	// Find the frame
+	frame, ok := assetData.Spritesheet.Frames[spriteName]
+	if !ok {
+		return "", fmt.Errorf("sprite %s not found in spritesheet", spriteName)
+	}
+
+	// Get the spritesheet PNG
+	spritesheetName := assetData.Spritesheet.Meta.Image
+	spritesheetData, ok := files[spritesheetName]
+	if !ok {
+		return "", fmt.Errorf("spritesheet image not found: %s", spritesheetName)
+	}
+
+	// Decode the PNG
+	img, err := png.Decode(bytes.NewReader(spritesheetData))
+	if err != nil {
+		return "", fmt.Errorf("failed to decode spritesheet PNG: %w", err)
+	}
+
+	// Extract sprite region
+	spriteRect := image.Rect(
+		frame.Frame.X,
+		frame.Frame.Y,
+		frame.Frame.X+frame.Frame.W,
+		frame.Frame.Y+frame.Frame.H,
+	)
+
+	// Create image with just the sprite
+	spriteImg := image.NewRGBA(image.Rect(0, 0, frame.Frame.W, frame.Frame.H))
+	for y := spriteRect.Min.Y; y < spriteRect.Max.Y; y++ {
+		for x := spriteRect.Min.X; x < spriteRect.Max.X; x++ {
+			spriteImg.Set(x-spriteRect.Min.X, y-spriteRect.Min.Y, img.At(x, y))
+		}
+	}
+
+	// Show save dialog
+	savePath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "Save Sprite",
+		DefaultFilename: spriteName + ".png",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "PNG Image", Pattern: "*.png"},
+		},
+	})
+
+	if err != nil {
+		return "", fmt.Errorf("failed to show save dialog: %w", err)
+	}
+
+	if savePath == "" {
+		return "", fmt.Errorf("save cancelled")
+	}
+
+	// Encode and save PNG
+	outFile, err := os.Create(savePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to create file: %w", err)
+	}
+	defer outFile.Close()
+
+	if err := png.Encode(outFile, spriteImg); err != nil {
+		return "", fmt.Errorf("failed to encode PNG: %w", err)
+	}
+
+	return savePath, nil
+}
+
+// ExtractMultipleSprites extracts selected sprites or all sprites
+func (a *App) ExtractMultipleSprites(files map[string][]byte, spriteNames []string, organizeByLayer bool) (*ExtractSpritesResult, error) {
+	// Show directory picker
+	outputDir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select Output Directory",
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to show directory dialog: %w", err)
+	}
+
+	if outputDir == "" {
+		return nil, fmt.Errorf("directory selection cancelled")
+	}
+
+	// Find the JSON file
+	var jsonData []byte
+	for name, data := range files {
+		if strings.HasSuffix(name, ".json") {
+			jsonData = data
+			break
+		}
+	}
+
+	if jsonData == nil {
+		return nil, fmt.Errorf("no JSON file found")
+	}
+
+	// Parse JSON
+	var assetData AssetData
+	if err := json.Unmarshal(jsonData, &assetData); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+
+	if assetData.Spritesheet == nil {
+		return nil, fmt.Errorf("no spritesheet data found")
+	}
+
+	// Get the spritesheet PNG
+	spritesheetName := assetData.Spritesheet.Meta.Image
+	spritesheetData, ok := files[spritesheetName]
+	if !ok {
+		return nil, fmt.Errorf("spritesheet image not found: %s", spritesheetName)
+	}
+
+	// Decode the PNG
+	img, err := png.Decode(bytes.NewReader(spritesheetData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode spritesheet PNG: %w", err)
+	}
+
+	// If spriteNames is empty, extract all
+	if len(spriteNames) == 0 {
+		for name := range assetData.Spritesheet.Frames {
+			spriteNames = append(spriteNames, name)
+		}
+	}
+
+	// Extract each sprite
+	var errors []string
+	extractedCount := 0
+
+	for _, spriteName := range spriteNames {
+		frame, ok := assetData.Spritesheet.Frames[spriteName]
+		if !ok {
+			errors = append(errors, fmt.Sprintf("sprite %s not found", spriteName))
+			continue
+		}
+
+		// Extract sprite region
+		spriteRect := image.Rect(
+			frame.Frame.X,
+			frame.Frame.Y,
+			frame.Frame.X+frame.Frame.W,
+			frame.Frame.Y+frame.Frame.H,
+		)
+
+		spriteImg := image.NewRGBA(image.Rect(0, 0, frame.Frame.W, frame.Frame.H))
+		for y := spriteRect.Min.Y; y < spriteRect.Max.Y; y++ {
+			for x := spriteRect.Min.X; x < spriteRect.Max.X; x++ {
+				spriteImg.Set(x-spriteRect.Min.X, y-spriteRect.Min.Y, img.At(x, y))
+			}
+		}
+
+		// Determine output path
+		var savePath string
+		if organizeByLayer {
+			// Extract layer from sprite name pattern: {name}_{size}_{layer}_{direction}_{frame}
+			parts := strings.Split(spriteName, "_")
+			layer := "unknown"
+			if len(parts) >= 3 {
+				layer = parts[len(parts)-3] // Layer is 3rd from end
+			}
+
+			layerDir := filepath.Join(outputDir, layer)
+			if err := os.MkdirAll(layerDir, 0755); err != nil {
+				errors = append(errors, fmt.Sprintf("failed to create directory %s: %v", layerDir, err))
+				continue
+			}
+
+			savePath = filepath.Join(layerDir, spriteName+".png")
+		} else {
+			savePath = filepath.Join(outputDir, spriteName+".png")
+		}
+
+		// Save sprite
+		outFile, err := os.Create(savePath)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("failed to create %s: %v", spriteName, err))
+			continue
+		}
+
+		if err := png.Encode(outFile, spriteImg); err != nil {
+			outFile.Close()
+			errors = append(errors, fmt.Sprintf("failed to encode %s: %v", spriteName, err))
+			continue
+		}
+
+		outFile.Close()
+		extractedCount++
+	}
+
+	return &ExtractSpritesResult{
+		Success:        len(errors) == 0,
+		ExtractedCount: extractedCount,
+		OutputPath:     outputDir,
+		Errors:         errors,
+	}, nil
+}
+
+// ExtractSpritesheet extracts the entire spritesheet PNG
+func (a *App) ExtractSpritesheet(files map[string][]byte) (string, error) {
+	// Find the JSON file to get spritesheet name
+	var jsonData []byte
+	for name, data := range files {
+		if strings.HasSuffix(name, ".json") {
+			jsonData = data
+			break
+		}
+	}
+
+	if jsonData == nil {
+		return "", fmt.Errorf("no JSON file found")
+	}
+
+	// Parse JSON
+	var assetData AssetData
+	if err := json.Unmarshal(jsonData, &assetData); err != nil {
+		return "", fmt.Errorf("failed to parse JSON: %w", err)
+	}
+
+	if assetData.Spritesheet == nil {
+		return "", fmt.Errorf("no spritesheet data found")
+	}
+
+	// Get the spritesheet PNG
+	spritesheetName := assetData.Spritesheet.Meta.Image
+	spritesheetData, ok := files[spritesheetName]
+	if !ok {
+		return "", fmt.Errorf("spritesheet image not found: %s", spritesheetName)
+	}
+
+	// Show save dialog
+	savePath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "Save Spritesheet",
+		DefaultFilename: spritesheetName,
+		Filters: []runtime.FileFilter{
+			{DisplayName: "PNG Image", Pattern: "*.png"},
+		},
+	})
+
+	if err != nil {
+		return "", fmt.Errorf("failed to show save dialog: %w", err)
+	}
+
+	if savePath == "" {
+		return "", fmt.Errorf("save cancelled")
+	}
+
+	// Save the spritesheet
+	if err := os.WriteFile(savePath, spritesheetData, 0644); err != nil {
+		return "", fmt.Errorf("failed to save spritesheet: %w", err)
+	}
+
+	return savePath, nil
+}
+
+// ReplaceSingleSprite replaces one sprite in the spritesheet
+func (a *App) ReplaceSingleSprite(files map[string][]byte, spriteName string, newSpriteData string) (map[string][]byte, error) {
+	// Decode base64 newSpriteData
+	newSpriteBytes, err := base64.StdEncoding.DecodeString(newSpriteData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode sprite data: %w", err)
+	}
+
+	// Decode new sprite PNG
+	newSprite, err := png.Decode(bytes.NewReader(newSpriteBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode new sprite PNG: %w", err)
+	}
+
+	// Find the JSON file
+	var jsonData []byte
+	var jsonFileName string
+	for name, data := range files {
+		if strings.HasSuffix(name, ".json") {
+			jsonData = data
+			jsonFileName = name
+			break
+		}
+	}
+
+	if jsonData == nil {
+		return nil, fmt.Errorf("no JSON file found")
+	}
+
+	// Parse JSON
+	var assetData AssetData
+	if err := json.Unmarshal(jsonData, &assetData); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+
+	if assetData.Spritesheet == nil {
+		return nil, fmt.Errorf("no spritesheet data found")
+	}
+
+	// Find the frame
+	frame, ok := assetData.Spritesheet.Frames[spriteName]
+	if !ok {
+		return nil, fmt.Errorf("sprite %s not found in spritesheet", spriteName)
+	}
+
+	// Get the spritesheet PNG
+	spritesheetName := assetData.Spritesheet.Meta.Image
+	spritesheetData, ok := files[spritesheetName]
+	if !ok {
+		return nil, fmt.Errorf("spritesheet image not found: %s", spritesheetName)
+	}
+
+	// Decode existing spritesheet
+	img, err := png.Decode(bytes.NewReader(spritesheetData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode spritesheet PNG: %w", err)
+	}
+
+	// Create new spritesheet by copying old one
+	newSpritesheet := image.NewRGBA(img.Bounds())
+	for y := img.Bounds().Min.Y; y < img.Bounds().Max.Y; y++ {
+		for x := img.Bounds().Min.X; x < img.Bounds().Max.X; x++ {
+			newSpritesheet.Set(x, y, img.At(x, y))
+		}
+	}
+
+	// Get new sprite dimensions
+	newBounds := newSprite.Bounds()
+	newW := newBounds.Dx()
+	newH := newBounds.Dy()
+
+	// Overlay new sprite at the frame position
+	for y := 0; y < newH; y++ {
+		for x := 0; x < newW; x++ {
+			if frame.Frame.X+x < newSpritesheet.Bounds().Max.X && frame.Frame.Y+y < newSpritesheet.Bounds().Max.Y {
+				newSpritesheet.Set(frame.Frame.X+x, frame.Frame.Y+y, newSprite.At(newBounds.Min.X+x, newBounds.Min.Y+y))
+			}
+		}
+	}
+
+	// Update frame metadata if dimensions changed
+	if newW != frame.Frame.W || newH != frame.Frame.H {
+		frame.Frame.W = newW
+		frame.Frame.H = newH
+		assetData.Spritesheet.Frames[spriteName] = frame
+	}
+
+	// Encode new spritesheet
+	var spritesheetBuf bytes.Buffer
+	if err := png.Encode(&spritesheetBuf, newSpritesheet); err != nil {
+		return nil, fmt.Errorf("failed to encode new spritesheet: %w", err)
+	}
+
+	// Encode updated JSON
+	updatedJSON, err := json.Marshal(assetData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode JSON: %w", err)
+	}
+
+	// Create updated files map
+	updatedFiles := make(map[string][]byte)
+	for name, data := range files {
+		updatedFiles[name] = data
+	}
+	updatedFiles[spritesheetName] = spritesheetBuf.Bytes()
+	updatedFiles[jsonFileName] = updatedJSON
+
+	return updatedFiles, nil
+}
+
+// ReplaceEntireSpritesheet replaces the entire spritesheet PNG
+func (a *App) ReplaceEntireSpritesheet(files map[string][]byte, newSpritesheetData string) (map[string][]byte, error) {
+	// Decode base64 newSpritesheetData
+	newSpritesheetBytes, err := base64.StdEncoding.DecodeString(newSpritesheetData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode spritesheet data: %w", err)
+	}
+
+	// Validate it's a PNG
+	newImg, err := png.Decode(bytes.NewReader(newSpritesheetBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode new spritesheet PNG: %w", err)
+	}
+
+	// Get new dimensions
+	newBounds := newImg.Bounds()
+	newW := newBounds.Dx()
+	newH := newBounds.Dy()
+
+	// Find the JSON file
+	var jsonData []byte
+	var jsonFileName string
+	for name, data := range files {
+		if strings.HasSuffix(name, ".json") {
+			jsonData = data
+			jsonFileName = name
+			break
+		}
+	}
+
+	if jsonData == nil {
+		return nil, fmt.Errorf("no JSON file found")
+	}
+
+	// Parse JSON
+	var assetData AssetData
+	if err := json.Unmarshal(jsonData, &assetData); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+
+	if assetData.Spritesheet == nil {
+		return nil, fmt.Errorf("no spritesheet data found")
+	}
+
+	// Validate all frame coordinates fit within new bounds
+	for frameName, frame := range assetData.Spritesheet.Frames {
+		if frame.Frame.X+frame.Frame.W > newW || frame.Frame.Y+frame.Frame.H > newH {
+			return nil, fmt.Errorf("frame %s does not fit in new spritesheet (frame at %d+%d, %d+%d but spritesheet is %dx%d)",
+				frameName, frame.Frame.X, frame.Frame.W, frame.Frame.Y, frame.Frame.H, newW, newH)
+		}
+	}
+
+	// Update JSON meta.size
+	assetData.Spritesheet.Meta.Size.W = newW
+	assetData.Spritesheet.Meta.Size.H = newH
+
+	// Encode updated JSON
+	updatedJSON, err := json.Marshal(assetData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode JSON: %w", err)
+	}
+
+	// Create updated files map
+	spritesheetName := assetData.Spritesheet.Meta.Image
+	updatedFiles := make(map[string][]byte)
+	for name, data := range files {
+		updatedFiles[name] = data
+	}
+	updatedFiles[spritesheetName] = newSpritesheetBytes
+	updatedFiles[jsonFileName] = updatedJSON
+
+	return updatedFiles, nil
+}
+
+// StartWatchingSpriteDirectory monitors a directory for sprite changes
+func (a *App) StartWatchingSpriteDirectory(path string, spriteNames []string) error {
+	// Stop existing watcher if any
+	if a.fileWatcher != nil {
+		a.fileWatcher.Close()
+	}
+
+	// Create new watcher
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return fmt.Errorf("failed to create file watcher: %w", err)
+	}
+
+	// Add path to watcher
+	if err := watcher.Add(path); err != nil {
+		watcher.Close()
+		return fmt.Errorf("failed to watch directory: %w", err)
+	}
+
+	// Store watcher state
+	a.fileWatcher = watcher
+	a.watcherPath = path
+	a.watcherSprites = make(map[string]string)
+	for _, spriteName := range spriteNames {
+		a.watcherSprites[spriteName] = filepath.Join(path, spriteName+".png")
+	}
+
+	// Start goroutine to listen for events
+	go func() {
+		for {
+			select {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+				if event.Op&fsnotify.Write == fsnotify.Write {
+					// File modified
+					filename := filepath.Base(event.Name)
+					spriteName := strings.TrimSuffix(filename, filepath.Ext(filename))
+
+					// Check if this is one of our watched sprites
+					if _, watched := a.watcherSprites[spriteName]; watched {
+						// Emit event to frontend
+						runtime.EventsEmit(a.ctx, "sprite-file-changed", map[string]string{
+							"spriteName": spriteName,
+							"filePath":   event.Name,
+						})
+					}
+				}
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+				runtime.EventsEmit(a.ctx, "sprite-watcher-error", err.Error())
+			}
+		}
+	}()
+
+	return nil
+}
+
+// StopWatchingSpriteDirectory stops monitoring
+func (a *App) StopWatchingSpriteDirectory() error {
+	if a.fileWatcher != nil {
+		if err := a.fileWatcher.Close(); err != nil {
+			return fmt.Errorf("failed to stop file watcher: %w", err)
+		}
+		a.fileWatcher = nil
+		a.watcherPath = ""
+		a.watcherSprites = nil
+	}
+	return nil
+}
+
+// GetWatcherStatus returns current watching state
+func (a *App) GetWatcherStatus() (*FileWatcherStatus, error) {
+	if a.fileWatcher == nil {
+		return &FileWatcherStatus{
+			Watching:    false,
+			Path:        "",
+			FileCount:   0,
+			SpriteNames: []string{},
+		}, nil
+	}
+
+	spriteNames := make([]string, 0, len(a.watcherSprites))
+	for name := range a.watcherSprites {
+		spriteNames = append(spriteNames, name)
+	}
+
+	return &FileWatcherStatus{
+		Watching:    true,
+		Path:        a.watcherPath,
+		FileCount:   len(a.watcherSprites),
+		SpriteNames: spriteNames,
+	}, nil
+}
+
+// ReadExternalFile reads a file from disk and returns it as base64
+func (a *App) ReadExternalFile(filePath string) (string, error) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read file: %w", err)
+	}
+
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// CropSprite crops a sprite to a new rectangle
+func (a *App) CropSprite(files map[string][]byte, spriteName string, cropX, cropY, cropW, cropH int) (map[string][]byte, error) {
+	// Find the JSON file
+	var jsonData []byte
+	for name, data := range files {
+		if strings.HasSuffix(name, ".json") {
+			jsonData = data
+			break
+		}
+	}
+
+	if jsonData == nil {
+		return nil, fmt.Errorf("no JSON file found")
+	}
+
+	// Parse JSON
+	var assetData AssetData
+	if err := json.Unmarshal(jsonData, &assetData); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+
+	if assetData.Spritesheet == nil {
+		return nil, fmt.Errorf("no spritesheet data found")
+	}
+
+	// Find the frame
+	frame, ok := assetData.Spritesheet.Frames[spriteName]
+	if !ok {
+		return nil, fmt.Errorf("sprite %s not found in spritesheet", spriteName)
+	}
+
+	// Get the spritesheet PNG
+	spritesheetName := assetData.Spritesheet.Meta.Image
+	spritesheetData, ok := files[spritesheetName]
+	if !ok {
+		return nil, fmt.Errorf("spritesheet image not found: %s", spritesheetName)
+	}
+
+	// Decode spritesheet
+	img, err := png.Decode(bytes.NewReader(spritesheetData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode spritesheet PNG: %w", err)
+	}
+
+	// Extract original sprite
+	spriteRect := image.Rect(
+		frame.Frame.X,
+		frame.Frame.Y,
+		frame.Frame.X+frame.Frame.W,
+		frame.Frame.Y+frame.Frame.H,
+	)
+
+	spriteImg := image.NewRGBA(image.Rect(0, 0, frame.Frame.W, frame.Frame.H))
+	for y := spriteRect.Min.Y; y < spriteRect.Max.Y; y++ {
+		for x := spriteRect.Min.X; x < spriteRect.Max.X; x++ {
+			spriteImg.Set(x-spriteRect.Min.X, y-spriteRect.Min.Y, img.At(x, y))
+		}
+	}
+
+	// Create cropped sprite
+	croppedImg := image.NewRGBA(image.Rect(0, 0, cropW, cropH))
+	for y := 0; y < cropH; y++ {
+		for x := 0; x < cropW; x++ {
+			if cropX+x < frame.Frame.W && cropY+y < frame.Frame.H {
+				croppedImg.Set(x, y, spriteImg.At(cropX+x, cropY+y))
+			}
+		}
+	}
+
+	// Encode cropped sprite
+	var croppedBuf bytes.Buffer
+	if err := png.Encode(&croppedBuf, croppedImg); err != nil {
+		return nil, fmt.Errorf("failed to encode cropped sprite: %w", err)
+	}
+
+	// Use ReplaceSingleSprite to update the spritesheet
+	croppedBase64 := base64.StdEncoding.EncodeToString(croppedBuf.Bytes())
+	return a.ReplaceSingleSprite(files, spriteName, croppedBase64)
+}
+
+// bilinearResize resizes an image using bilinear interpolation
+func bilinearResize(src image.Image, dstW, dstH int) image.Image {
+	srcBounds := src.Bounds()
+	srcW, srcH := srcBounds.Dx(), srcBounds.Dy()
+
+	dst := image.NewRGBA(image.Rect(0, 0, dstW, dstH))
+
+	scaleX := float64(srcW) / float64(dstW)
+	scaleY := float64(srcH) / float64(dstH)
+
+	for y := 0; y < dstH; y++ {
+		for x := 0; x < dstW; x++ {
+			// Calculate source coordinates
+			srcX := float64(x) * scaleX
+			srcY := float64(y) * scaleY
+
+			// Get integer parts
+			x1 := int(srcX)
+			y1 := int(srcY)
+			x2 := min(x1+1, srcW-1)
+			y2 := min(y1+1, srcH-1)
+
+			// Get fractional parts
+			fx := srcX - float64(x1)
+			fy := srcY - float64(y1)
+
+			// Get four neighboring pixels
+			c11 := src.At(x1+srcBounds.Min.X, y1+srcBounds.Min.Y)
+			c21 := src.At(x2+srcBounds.Min.X, y1+srcBounds.Min.Y)
+			c12 := src.At(x1+srcBounds.Min.X, y2+srcBounds.Min.Y)
+			c22 := src.At(x2+srcBounds.Min.X, y2+srcBounds.Min.Y)
+
+			// Convert to RGBA
+			r11, g11, b11, a11 := c11.RGBA()
+			r21, g21, b21, a21 := c21.RGBA()
+			r12, g12, b12, a12 := c12.RGBA()
+			r22, g22, b22, a22 := c22.RGBA()
+
+			// Bilinear interpolation
+			r := uint8((float64(r11)*(1-fx)*(1-fy) + float64(r21)*fx*(1-fy) + float64(r12)*(1-fx)*fy + float64(r22)*fx*fy) / 256)
+			g := uint8((float64(g11)*(1-fx)*(1-fy) + float64(g21)*fx*(1-fy) + float64(g12)*(1-fx)*fy + float64(g22)*fx*fy) / 256)
+			b := uint8((float64(b11)*(1-fx)*(1-fy) + float64(b21)*fx*(1-fy) + float64(b12)*(1-fx)*fy + float64(b22)*fx*fy) / 256)
+			alpha := uint8((float64(a11)*(1-fx)*(1-fy) + float64(a21)*fx*(1-fy) + float64(a12)*(1-fx)*fy + float64(a22)*fx*fy) / 256)
+
+			dst.Set(x, y, color.RGBA{R: r, G: g, B: b, A: alpha})
+		}
+	}
+
+	return dst
+}
+
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// ResizeSprite resizes a sprite using bilinear interpolation
+func (a *App) ResizeSprite(files map[string][]byte, spriteName string, newW, newH int) (map[string][]byte, error) {
+	// Find the JSON file
+	var jsonData []byte
+	for name, data := range files {
+		if strings.HasSuffix(name, ".json") {
+			jsonData = data
+			break
+		}
+	}
+
+	if jsonData == nil {
+		return nil, fmt.Errorf("no JSON file found")
+	}
+
+	// Parse JSON
+	var assetData AssetData
+	if err := json.Unmarshal(jsonData, &assetData); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+
+	if assetData.Spritesheet == nil {
+		return nil, fmt.Errorf("no spritesheet data found")
+	}
+
+	// Find the frame
+	frame, ok := assetData.Spritesheet.Frames[spriteName]
+	if !ok {
+		return nil, fmt.Errorf("sprite %s not found in spritesheet", spriteName)
+	}
+
+	// Get the spritesheet PNG
+	spritesheetName := assetData.Spritesheet.Meta.Image
+	spritesheetData, ok := files[spritesheetName]
+	if !ok {
+		return nil, fmt.Errorf("spritesheet image not found: %s", spritesheetName)
+	}
+
+	// Decode spritesheet
+	img, err := png.Decode(bytes.NewReader(spritesheetData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode spritesheet PNG: %w", err)
+	}
+
+	// Extract original sprite
+	spriteRect := image.Rect(
+		frame.Frame.X,
+		frame.Frame.Y,
+		frame.Frame.X+frame.Frame.W,
+		frame.Frame.Y+frame.Frame.H,
+	)
+
+	spriteImg := image.NewRGBA(image.Rect(0, 0, frame.Frame.W, frame.Frame.H))
+	for y := spriteRect.Min.Y; y < spriteRect.Max.Y; y++ {
+		for x := spriteRect.Min.X; x < spriteRect.Max.X; x++ {
+			spriteImg.Set(x-spriteRect.Min.X, y-spriteRect.Min.Y, img.At(x, y))
+		}
+	}
+
+	// Resize sprite
+	resizedImg := bilinearResize(spriteImg, newW, newH)
+
+	// Encode resized sprite
+	var resizedBuf bytes.Buffer
+	if err := png.Encode(&resizedBuf, resizedImg); err != nil {
+		return nil, fmt.Errorf("failed to encode resized sprite: %w", err)
+	}
+
+	// Use ReplaceSingleSprite to update the spritesheet
+	resizedBase64 := base64.StdEncoding.EncodeToString(resizedBuf.Bytes())
+	return a.ReplaceSingleSprite(files, spriteName, resizedBase64)
+}
+
+// FlipSprite flips a sprite horizontally or vertically
+func (a *App) FlipSprite(files map[string][]byte, spriteName string, horizontal bool) (map[string][]byte, error) {
+	// Find the JSON file
+	var jsonData []byte
+	for name, data := range files {
+		if strings.HasSuffix(name, ".json") {
+			jsonData = data
+			break
+		}
+	}
+
+	if jsonData == nil {
+		return nil, fmt.Errorf("no JSON file found")
+	}
+
+	// Parse JSON
+	var assetData AssetData
+	if err := json.Unmarshal(jsonData, &assetData); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+
+	if assetData.Spritesheet == nil {
+		return nil, fmt.Errorf("no spritesheet data found")
+	}
+
+	// Find the frame
+	frame, ok := assetData.Spritesheet.Frames[spriteName]
+	if !ok {
+		return nil, fmt.Errorf("sprite %s not found in spritesheet", spriteName)
+	}
+
+	// Get the spritesheet PNG
+	spritesheetName := assetData.Spritesheet.Meta.Image
+	spritesheetData, ok := files[spritesheetName]
+	if !ok {
+		return nil, fmt.Errorf("spritesheet image not found: %s", spritesheetName)
+	}
+
+	// Decode spritesheet
+	img, err := png.Decode(bytes.NewReader(spritesheetData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode spritesheet PNG: %w", err)
+	}
+
+	// Extract original sprite
+	spriteRect := image.Rect(
+		frame.Frame.X,
+		frame.Frame.Y,
+		frame.Frame.X+frame.Frame.W,
+		frame.Frame.Y+frame.Frame.H,
+	)
+
+	spriteImg := image.NewRGBA(image.Rect(0, 0, frame.Frame.W, frame.Frame.H))
+	for y := spriteRect.Min.Y; y < spriteRect.Max.Y; y++ {
+		for x := spriteRect.Min.X; x < spriteRect.Max.X; x++ {
+			spriteImg.Set(x-spriteRect.Min.X, y-spriteRect.Min.Y, img.At(x, y))
+		}
+	}
+
+	// Flip sprite
+	flippedImg := image.NewRGBA(image.Rect(0, 0, frame.Frame.W, frame.Frame.H))
+	for y := 0; y < frame.Frame.H; y++ {
+		for x := 0; x < frame.Frame.W; x++ {
+			if horizontal {
+				// Horizontal flip
+				flippedImg.Set(frame.Frame.W-1-x, y, spriteImg.At(x, y))
+			} else {
+				// Vertical flip
+				flippedImg.Set(x, frame.Frame.H-1-y, spriteImg.At(x, y))
+			}
+		}
+	}
+
+	// Encode flipped sprite
+	var flippedBuf bytes.Buffer
+	if err := png.Encode(&flippedBuf, flippedImg); err != nil {
+		return nil, fmt.Errorf("failed to encode flipped sprite: %w", err)
+	}
+
+	// Use ReplaceSingleSprite to update the spritesheet
+	flippedBase64 := base64.StdEncoding.EncodeToString(flippedBuf.Bytes())
+	return a.ReplaceSingleSprite(files, spriteName, flippedBase64)
 }
 
 // createNitroZip creates a ZIP file containing the .nitro file and icon PNG

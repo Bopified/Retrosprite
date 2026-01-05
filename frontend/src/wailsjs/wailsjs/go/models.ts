@@ -54,6 +54,42 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class ExtractSpritesResult {
+	    success: boolean;
+	    extractedCount: number;
+	    outputPath: string;
+	    errors?: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ExtractSpritesResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.success = source["success"];
+	        this.extractedCount = source["extractedCount"];
+	        this.outputPath = source["outputPath"];
+	        this.errors = source["errors"];
+	    }
+	}
+	export class FileWatcherStatus {
+	    watching: boolean;
+	    path: string;
+	    fileCount: number;
+	    spriteNames: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new FileWatcherStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.watching = source["watching"];
+	        this.path = source["path"];
+	        this.fileCount = source["fileCount"];
+	        this.spriteNames = source["spriteNames"];
+	    }
+	}
 	export class NitroResponse {
 	    path: string;
 	    files: Record<string, Array<number>>;
@@ -117,6 +153,28 @@ export namespace main {
 		    }
 		    return a;
 		}
+	}
+	export class SpriteInfo {
+	    name: string;
+	    x: number;
+	    y: number;
+	    w: number;
+	    h: number;
+	    thumbnail: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SpriteInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.x = source["x"];
+	        this.y = source["y"];
+	        this.w = source["w"];
+	        this.h = source["h"];
+	        this.thumbnail = source["thumbnail"];
+	    }
 	}
 	export class UpdateInfo {
 	    available: boolean;

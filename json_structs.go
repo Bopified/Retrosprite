@@ -182,3 +182,29 @@ type Dimensions3D struct {
 
 type AssetLogicMask struct {
 }
+
+// SpriteInfo represents metadata about a single sprite with a thumbnail
+type SpriteInfo struct {
+	Name      string `json:"name"`
+	X         int    `json:"x"`
+	Y         int    `json:"y"`
+	W         int    `json:"w"`
+	H         int    `json:"h"`
+	Thumbnail string `json:"thumbnail"` // base64-encoded 64x64 PNG
+}
+
+// ExtractSpritesResult returns extraction results
+type ExtractSpritesResult struct {
+	Success        bool     `json:"success"`
+	ExtractedCount int      `json:"extractedCount"`
+	OutputPath     string   `json:"outputPath"`
+	Errors         []string `json:"errors,omitempty"`
+}
+
+// FileWatcherStatus represents file watching state
+type FileWatcherStatus struct {
+	Watching    bool     `json:"watching"`
+	Path        string   `json:"path"`
+	FileCount   int      `json:"fileCount"`
+	SpriteNames []string `json:"spriteNames"`
+}
