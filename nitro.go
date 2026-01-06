@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"compress/zlib"
 	"encoding/base64"
 	"encoding/binary"
@@ -35,6 +36,16 @@ func sanitizeImage(data []byte) []byte {
 		}
 	}
 	return data
+}
+
+func readNitroWithGzipFallback(compressedData []byte, fileName string) ([]byte, error) {
+	gzipReader, err := gzip.NewReader(bytes.NewReader(compressedData))
+	if err != nil {
+		return nil, fmt.Errorf("could not read file using zip for %s: %w", fileName, err)
+	}
+	defer gzipReader.Close()
+	decompressedData, err := io.ReadAll(gzipReader)
+	return decompressedData, err
 }
 
 func ReadNitro(path string) (*NitroFile, error) {
@@ -72,16 +83,19 @@ func ReadNitro(path string) (*NitroFile, error) {
 		if _, err := io.ReadFull(reader, compressedData); err != nil {
 			return nil, fmt.Errorf("failed to read compressed data for %s: %w", fileName, err)
 		}
-
+		var decompressedData []byte
 		zlibReader, err := zlib.NewReader(bytes.NewReader(compressedData))
 		if err != nil {
-			return nil, fmt.Errorf("failed to create zlib reader for %s: %w", fileName, err)
-		}
-
-		decompressedData, err := io.ReadAll(zlibReader)
-		zlibReader.Close()
-		if err != nil {
-			return nil, fmt.Errorf("failed to decompress data for %s: %w", fileName, err)
+			decompressedData, err = readNitroWithGzipFallback(compressedData, fileName)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decompress data for %s: %w", fileName, err)
+			}
+		} else {
+			decompressedData, err = io.ReadAll(zlibReader)
+			zlibReader.Close()
+			if err != nil {
+				return nil, fmt.Errorf("failed to decompress data for %s: %w", fileName, err)
+			}
 		}
 
 		if strings.HasSuffix(fileName, ".png") {
