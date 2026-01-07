@@ -1,5 +1,17 @@
 export namespace main {
 	
+	export class AppSettings {
+	    defaultZ: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AppSettings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.defaultZ = source["defaultZ"];
+	    }
+	}
 	export class BatchConversionFileResult {
 	    path: string;
 	    success: boolean;

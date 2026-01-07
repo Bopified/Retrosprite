@@ -22,6 +22,8 @@ export function GenerateSpriteThumbnails(arg1:Record<string, Array<number>>):Pro
 
 export function GetCurrentVersion():Promise<string>;
 
+export function GetSettings():Promise<main.AppSettings>;
+
 export function GetWatcherStatus():Promise<main.FileWatcherStatus>;
 
 export function LoadNitroFile(arg1:string):Promise<main.NitroResponse>;
@@ -49,6 +51,8 @@ export function SaveNitroFile(arg1:string,arg2:Record<string, Array<number>>,arg
 export function SaveProject(arg1:string,arg2:main.RsprProject,arg3:string):Promise<string>;
 
 export function SelectMultipleSWFFiles():Promise<Array<string>>;
+
+export function SetDefaultZ(arg1:number):Promise<void>;
 
 export function StartWatchingSpriteDirectory(arg1:string,arg2:Array<string>):Promise<void>;
 

@@ -11,6 +11,7 @@ func MapXMLtoAssetData(
 	logic *LogicXML,
 	index *IndexXML,
 	manifest *ManifestXML,
+	defaultZ float64,
 ) *AssetData {
 	data := &AssetData{
 		Assets:         make(map[string]Asset),
@@ -33,10 +34,22 @@ func MapXMLtoAssetData(
 	}
 
 	if logic != nil {
+		z := logic.Model.Dimensions.Z
+		// Use configured default Z if it's 0 or missing
+		if z == 0 {
+			z = defaultZ
+		}
+
+		directions := mapLogicDirections(logic.Model.Directions)
+		// Add default directions [0, 90] if missing or empty
+		if len(directions) == 0 {
+			directions = []int{0, 90}
+		}
+
 		data.LogicData = &AssetLogic{
 			Model: AssetLogicModel{
-				Dimensions: Dimensions3D{X: float64(logic.Model.Dimensions.X), Y: float64(logic.Model.Dimensions.Y), Z: float64(logic.Model.Dimensions.Z)},
-				Directions: mapLogicDirections(logic.Model.Directions),
+				Dimensions: Dimensions3D{X: float64(logic.Model.Dimensions.X), Y: float64(logic.Model.Dimensions.Y), Z: z},
+				Directions: directions,
 			},
 		}
 	}

@@ -35,19 +35,91 @@ type ProjectSettings struct {
 	LastOpenedFile string `json:"lastOpenedFile,omitempty"`
 }
 
+type AppSettings struct {
+	DefaultZ float64 `json:"defaultZ"` // Default Z value for SWF conversions
+}
+
 type App struct {
 	ctx            context.Context
 	fileWatcher    *fsnotify.Watcher
 	watcherPath    string
 	watcherSprites map[string]string // spriteName -> filePath
+	settings       AppSettings
 }
 
 func NewApp() *App {
-	return &App{}
+	app := &App{
+		settings: AppSettings{
+			DefaultZ: 1.0, // Default value
+		},
+	}
+	app.loadSettings()
+	return app
 }
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+}
+
+// getSettingsPath returns the path to the settings file
+func (a *App) getSettingsPath() (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	settingsDir := filepath.Join(homeDir, ".retrosprite")
+	if err := os.MkdirAll(settingsDir, 0755); err != nil {
+		return "", err
+	}
+
+	return filepath.Join(settingsDir, "settings.json"), nil
+}
+
+// loadSettings loads app settings from disk
+func (a *App) loadSettings() {
+	path, err := a.getSettingsPath()
+	if err != nil {
+		return // Use defaults
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return // Use defaults
+	}
+
+	var settings AppSettings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return // Use defaults
+	}
+
+	a.settings = settings
+}
+
+// saveSettings saves app settings to disk
+func (a *App) saveSettings() error {
+	path, err := a.getSettingsPath()
+	if err != nil {
+		return err
+	}
+
+	data, err := json.MarshalIndent(a.settings, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(path, data, 0644)
+}
+
+// GetSettings returns the current app settings
+func (a *App) GetSettings() AppSettings {
+	return a.settings
+}
+
+// SetDefaultZ sets the default Z value and saves settings
+func (a *App) SetDefaultZ(z float64) error {
+	a.settings.DefaultZ = z
+	return a.saveSettings()
 }
 
 type NitroResponse struct {
@@ -1520,7 +1592,7 @@ func (a *App) ConvertSWF() (*NitroResponse, error) {
 		return nil, err
 	}
 
-	nitro, err := ConvertSWFBytesToNitro(data, selection)
+	nitro, err := ConvertSWFBytesToNitro(data, selection, a.settings.DefaultZ)
 	if err != nil {
 		return nil, err
 	}
@@ -1839,7 +1911,7 @@ func (a *App) BatchConvertSWFsToNitro(swfPaths []string) (*BatchConversionResult
 		}
 
 		// Convert SWF to Nitro
-		nitroFile, err := ConvertSWFToNitro(swfPath)
+		nitroFile, err := ConvertSWFToNitro(swfPath, a.settings.DefaultZ)
 		if err != nil {
 			fileResult.Error = fmt.Sprintf("conversion failed: %v", err)
 			result.Files = append(result.Files, fileResult)

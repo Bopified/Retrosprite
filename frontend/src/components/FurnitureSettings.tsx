@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     Box, TextField, Checkbox, FormControlLabel,
-    Typography, Select, MenuItem, Button, FormControl, Paper, Stack
+    Typography, Select, MenuItem, Button, FormControl, Paper, Stack, Divider
 } from '@mui/material';
 import type { NitroJSON, AvatarTestingState } from '../types';
+// @ts-ignore
+import { GetSettings, SetDefaultZ } from '../wailsjs/go/main/App';
 
 interface FurnitureSettingsProps {
     jsonContent: NitroJSON;
@@ -37,6 +39,18 @@ export const FurnitureSettings: React.FC<FurnitureSettingsProps> = ({
     const [dimX, setDimX] = useState(jsonContent.logic?.model?.dimensions?.x || 1);
     const [dimY, setDimY] = useState(jsonContent.logic?.model?.dimensions?.y || 1);
     const [dimZ, setDimZ] = useState(jsonContent.logic?.model?.dimensions?.z || 1);
+
+    // App-wide conversion settings
+    const [defaultZ, setDefaultZState] = useState<number>(1.0);
+
+    // Load app settings on mount
+    useEffect(() => {
+        GetSettings().then((settings: any) => {
+            setDefaultZState(settings.defaultZ || 1.0);
+        }).catch((err: any) => {
+            console.error('Failed to load app settings:', err);
+        });
+    }, []);
 
     const mainViz = jsonContent.visualizations?.find(v => v.size === 64) || jsonContent.visualizations?.[0];
 
@@ -244,6 +258,42 @@ export const FurnitureSettings: React.FC<FurnitureSettingsProps> = ({
                             <Button variant="contained" color="error" disabled>- Remove layer</Button>
                         </Stack>
                     </Box>
+                </Box>
+
+                <Divider sx={{ my: 4 }} />
+
+                {/* Global Conversion Settings */}
+                <Box>
+                    <Typography variant="h6" gutterBottom>
+                        Global Conversion Settings
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                        These settings apply to all SWF to Nitro conversions. They are used as defaults when the SWF file doesn't specify values.
+                    </Typography>
+
+                    <FormRow label="Default Z Height">
+                        <Box display="flex" gap={1} alignItems="center">
+                            <TextField
+                                type="number"
+                                size="small"
+                                inputProps={{ step: 0.1, min: 0 }}
+                                value={defaultZ}
+                                onChange={async (e) => {
+                                    const newValue = parseFloat(e.target.value) || 0;
+                                    setDefaultZState(newValue);
+                                    try {
+                                        await SetDefaultZ(newValue);
+                                    } catch (err) {
+                                        console.error('Failed to save default Z:', err);
+                                    }
+                                }}
+                                sx={{ width: '120px' }}
+                            />
+                            <Typography variant="caption" color="text.secondary">
+                                Used when converting SWF files with Z=0 or missing Z dimension
+                            </Typography>
+                        </Box>
+                    </FormRow>
                 </Box>
             </Paper>
         </Box>

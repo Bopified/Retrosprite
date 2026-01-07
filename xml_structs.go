@@ -163,9 +163,9 @@ type LogicModelXML struct {
 }
 
 type LogicDimensionsXML struct {
-	X int `xml:"x,attr"`
-	Y int `xml:"y,attr"`
-	Z int `xml:"z,attr"`
+	X int     `xml:"x,attr"`
+	Y int     `xml:"y,attr"`
+	Z float64 `xml:"z,attr"`
 }
 
 type LogicDirectionXML struct {

@@ -42,6 +42,10 @@ export function GetCurrentVersion() {
   return window['go']['main']['App']['GetCurrentVersion']();
 }
 
+export function GetSettings() {
+  return window['go']['main']['App']['GetSettings']();
+}
+
 export function GetWatcherStatus() {
   return window['go']['main']['App']['GetWatcherStatus']();
 }
@@ -96,6 +100,10 @@ export function SaveProject(arg1, arg2, arg3) {
 
 export function SelectMultipleSWFFiles() {
   return window['go']['main']['App']['SelectMultipleSWFFiles']();
+}
+
+export function SetDefaultZ(arg1) {
+  return window['go']['main']['App']['SetDefaultZ'](arg1);
 }
 
 export function StartWatchingSpriteDirectory(arg1, arg2) {

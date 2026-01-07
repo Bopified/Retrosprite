@@ -27,15 +27,15 @@ type ParsedSWF struct {
 	ClassNames map[uint16]string
 }
 
-func ConvertSWFToNitro(swfPath string) (*NitroFile, error) {
+func ConvertSWFToNitro(swfPath string, defaultZ float64) (*NitroFile, error) {
 	data, err := os.ReadFile(swfPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read SWF file: %w", err)
 	}
-	return ConvertSWFBytesToNitro(data, swfPath)
+	return ConvertSWFBytesToNitro(data, swfPath, defaultZ)
 }
 
-func ConvertSWFBytesToNitro(swfData []byte, filename string) (*NitroFile, error) {
+func ConvertSWFBytesToNitro(swfData []byte, filename string, defaultZ float64) (*NitroFile, error) {
 	reader, err := swf.UncompressSWF(swfData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to uncompress SWF: %w", err)
@@ -132,7 +132,7 @@ func ConvertSWFBytesToNitro(swfData []byte, filename string) (*NitroFile, error)
 		return nil, fmt.Errorf("failed to pack sprites: %w", err)
 	}
 
-	assetData := MapXMLtoAssetData(assetsXML, visXML, logicXML, indexXML, manifestXML)
+	assetData := MapXMLtoAssetData(assetsXML, visXML, logicXML, indexXML, manifestXML, defaultZ)
 	assetData.Spritesheet = sheetData
 	assetData.Name = baseName // Ensure name is set
 
@@ -163,34 +163,33 @@ func packSprites(sprites []*Sprite, sheetName string) (image.Image, *Spritesheet
 		return sprites[i].Img.Bounds().Dy() > sprites[j].Img.Bounds().Dy()
 	})
 
-	maxWidth := 2048
-	currentX := 0
-	currentY := 0
-	rowHeight := 0
-
-	var packedSprites []*Sprite
+	// Calculate max width and total height for vertical packing
+	maxWidth := 0
 	totalHeight := 0
 
 	for _, s := range sprites {
 		w := s.Img.Bounds().Dx()
 		h := s.Img.Bounds().Dy()
 
-		if currentX+w > maxWidth {
-			currentX = 0
-			currentY += rowHeight
-			rowHeight = 0
+		if w > maxWidth {
+			maxWidth = w
 		}
+		totalHeight += h
+	}
 
-		s.Rect = image.Rect(currentX, currentY, currentX+w, currentY+h)
+	// Pack sprites vertically
+	currentY := 0
+	var packedSprites []*Sprite
+
+	for _, s := range sprites {
+		w := s.Img.Bounds().Dx()
+		h := s.Img.Bounds().Dy()
+
+		// All sprites aligned at x=0, stacked vertically
+		s.Rect = image.Rect(0, currentY, w, currentY+h)
 		packedSprites = append(packedSprites, s)
 
-		currentX += w
-		if h > rowHeight {
-			rowHeight = h
-		}
-		if currentY+rowHeight > totalHeight {
-			totalHeight = currentY + rowHeight
-		}
+		currentY += h
 	}
 
 	sheet := image.NewRGBA(image.Rect(0, 0, maxWidth, totalHeight))
