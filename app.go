@@ -12,6 +12,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -2093,4 +2094,196 @@ func extractAndAddIcon(zipWriter *zip.Writer, filename string, nitroFile *NitroF
 
 	_, err = writer.Write(iconBuf.Bytes())
 	return err
+}
+
+// rgbToHsl converts RGB to HSL
+func rgbToHsl(r, g, b uint8) (h, s, l float64) {
+	rf := float64(r) / 255.0
+	gf := float64(g) / 255.0
+	bf := float64(b) / 255.0
+
+	maxV := math.Max(rf, math.Max(gf, bf))
+	minV := math.Min(rf, math.Min(gf, bf))
+
+	l = (maxV + minV) / 2.0
+
+	if maxV == minV {
+		h = 0
+		s = 0
+	} else {
+		d := maxV - minV
+		if l > 0.5 {
+			s = d / (2.0 - maxV - minV)
+		} else {
+			s = d / (maxV + minV)
+		}
+
+		switch maxV {
+		case rf:
+			h = (gf - bf) / d
+			if gf < bf {
+				h += 6.0
+			}
+		case gf:
+			h = (bf - rf) / d + 2.0
+		case bf:
+			h = (rf - gf) / d + 4.0
+		}
+		h /= 6.0
+	}
+
+	return
+}
+
+// hue2rgb helper for hslToRgb
+func hue2rgb(p, q, t float64) float64 {
+	if t < 0 {
+		t += 1
+	}
+	if t > 1 {
+		t -= 1
+	}
+	if t < 1.0/6.0 {
+		return p + (q-p)*6.0*t
+	}
+	if t < 1.0/2.0 {
+		return q
+	}
+	if t < 2.0/3.0 {
+		return p + (q-p)*(2.0/3.0-t)*6.0
+	}
+	return p
+}
+
+// hslToRgb converts HSL to RGB
+func hslToRgb(h, s, l float64) (r, g, b uint8) {
+	var rf, gf, bf float64
+
+	if s == 0 {
+		rf, gf, bf = l, l, l
+	} else {
+		var q float64
+		if l < 0.5 {
+			q = l * (1 + s)
+		} else {
+			q = l + s - l*s
+		}
+		p := 2*l - q
+
+		rf = hue2rgb(p, q, h+1.0/3.0)
+		gf = hue2rgb(p, q, h)
+		bf = hue2rgb(p, q, h-1.0/3.0)
+	}
+
+	r = uint8(rf * 255)
+	g = uint8(gf * 255)
+	b = uint8(bf * 255)
+	return
+}
+
+// ColorizeSprite adjusts the hue, saturation, and lightness of a sprite
+func (a *App) ColorizeSprite(files map[string][]byte, spriteName string, hue, saturation, lightness float64) (map[string][]byte, error) {
+	// Find the JSON file
+	var jsonData []byte
+	for name, data := range files {
+		if strings.HasSuffix(name, ".json") {
+			jsonData = data
+			break
+		}
+	}
+
+	if jsonData == nil {
+		return nil, fmt.Errorf("no JSON file found")
+	}
+
+	// Parse JSON
+	var assetData AssetData
+	if err := json.Unmarshal(jsonData, &assetData); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+
+	if assetData.Spritesheet == nil {
+		return nil, fmt.Errorf("no spritesheet data found")
+	}
+
+	// Find the frame
+	frame, ok := assetData.Spritesheet.Frames[spriteName]
+	if !ok {
+		return nil, fmt.Errorf("sprite %s not found in spritesheet", spriteName)
+	}
+
+	// Get the spritesheet PNG
+	spritesheetName := assetData.Spritesheet.Meta.Image
+	spritesheetData, ok := files[spritesheetName]
+	if !ok {
+		return nil, fmt.Errorf("spritesheet image not found: %s", spritesheetName)
+	}
+
+	// Decode spritesheet
+	img, err := png.Decode(bytes.NewReader(spritesheetData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode spritesheet PNG: %w", err)
+	}
+
+	// Extract original sprite
+	spriteRect := image.Rect(
+		frame.Frame.X,
+		frame.Frame.Y,
+		frame.Frame.X+frame.Frame.W,
+		frame.Frame.Y+frame.Frame.H,
+	)
+
+	spriteImg := image.NewRGBA(image.Rect(0, 0, frame.Frame.W, frame.Frame.H))
+	for y := spriteRect.Min.Y; y < spriteRect.Max.Y; y++ {
+		for x := spriteRect.Min.X; x < spriteRect.Max.X; x++ {
+			spriteImg.Set(x-spriteRect.Min.X, y-spriteRect.Min.Y, img.At(x, y))
+		}
+	}
+
+	// Apply Colorization
+	colorizedImg := image.NewRGBA(image.Rect(0, 0, frame.Frame.W, frame.Frame.H))
+	for y := 0; y < frame.Frame.H; y++ {
+		for x := 0; x < frame.Frame.W; x++ {
+			c := spriteImg.At(x, y)
+			r, g, b, alpha := c.RGBA()
+
+			// RGBA returns values in 0-65535 range, shift to 8-bit
+			r8 := uint8(r >> 8)
+			g8 := uint8(g >> 8)
+			b8 := uint8(b >> 8)
+			a8 := uint8(alpha >> 8)
+
+			if a8 == 0 {
+				colorizedImg.Set(x, y, c)
+				continue
+			}
+
+			_, _, l := rgbToHsl(r8, g8, b8)
+
+			// New logic: Set Hue and Saturation absolute, Lightness relative
+			
+			// Hue (absolute 0-1)
+			h := hue / 360.0
+			
+			// Saturation (absolute 0-1, mapped from input 0-100)
+			s := math.Max(0, math.Min(1, saturation/100.0))
+			
+			// Lightness (relative multiplier, 100 is normal)
+			l = math.Max(0, math.Min(1, l*(lightness/100.0)))
+
+			newR, newG, newB := hslToRgb(h, s, l)
+
+			colorizedImg.Set(x, y, color.RGBA{R: newR, G: newG, B: newB, A: a8})
+		}
+	}
+
+	// Encode colorized sprite
+	var colorizedBuf bytes.Buffer
+	if err := png.Encode(&colorizedBuf, colorizedImg); err != nil {
+		return nil, fmt.Errorf("failed to encode colorized sprite: %w", err)
+	}
+
+	// Use ReplaceSingleSprite to update the spritesheet
+	colorizedBase64 := base64.StdEncoding.EncodeToString(colorizedBuf.Bytes())
+	return a.ReplaceSingleSprite(files, spriteName, colorizedBase64)
 }

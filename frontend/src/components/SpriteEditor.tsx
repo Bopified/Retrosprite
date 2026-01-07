@@ -2,7 +2,8 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
     Box, Paper, Typography, TextField, Button, IconButton, FormControl, InputLabel,
     Select, MenuItem, Dialog, DialogTitle, DialogContent, DialogActions, Checkbox,
-    FormControlLabel, Radio, RadioGroup, Snackbar, Alert, Toolbar, CircularProgress
+    FormControlLabel, Radio, RadioGroup, Snackbar, Alert, Toolbar, CircularProgress,
+    Slider
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import CloseIcon from '@mui/icons-material/Close';
@@ -12,10 +13,13 @@ import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import CropIcon from '@mui/icons-material/Crop';
 import AspectRatioIcon from '@mui/icons-material/AspectRatio';
 import FlipIcon from '@mui/icons-material/Flip';
+import PaletteIcon from '@mui/icons-material/Palette';
 import UndoIcon from '@mui/icons-material/Undo';
 import SelectAllIcon from '@mui/icons-material/SelectAll';
 import ZoomInIcon from '@mui/icons-material/ZoomIn';
 import ZoomOutIcon from '@mui/icons-material/ZoomOut';
+import AddIcon from '@mui/icons-material/Add';
+import { Sketch } from '@uiw/react-color';
 import type { NitroJSON } from '../types';
 import {
     GenerateSpriteThumbnails,
@@ -26,7 +30,8 @@ import {
     ReadExternalFile,
     CropSprite,
     ResizeSprite,
-    FlipSprite
+    FlipSprite,
+    ColorizeSprite
 } from '../wailsjs/go/main/App';
 
 interface SpriteInfo {
@@ -45,7 +50,54 @@ interface SpriteEditorProps {
 }
 
 type ViewMode = 'gallery' | 'edit';
-type EditMode = 'crop' | 'resize' | 'flip' | null;
+type EditMode = 'crop' | 'resize' | 'flip' | 'colorize' | null;
+
+// Helper functions for color conversion
+const rgbToHsl = (r: number, g: number, b: number): [number, number, number] => {
+    r /= 255;
+    g /= 255;
+    b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    let h = 0, s = 0, l = (max + min) / 2;
+
+    if (max !== min) {
+        const d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        switch (max) {
+            case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+            case g: h = (b - r) / d + 2; break;
+            case b: h = (r - g) / d + 4; break;
+        }
+        h /= 6;
+    }
+    return [h, s, l];
+};
+
+const hslToRgb = (h: number, s: number, l: number): [number, number, number] => {
+    let r, g, b;
+    if (s === 0) {
+        r = g = b = l;
+    } else {
+        const hue2rgb = (p: number, q: number, t: number) => {
+            if (t < 0) t += 1;
+            if (t > 1) t -= 1;
+            if (t < 1 / 6) return p + (q - p) * 6 * t;
+            if (t < 1 / 2) return q;
+            if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+            return p;
+        };
+        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        const p = 2 * l - q;
+        r = hue2rgb(p, q, h + 1 / 3);
+        g = hue2rgb(p, q, h);
+        b = hue2rgb(p, q, h - 1 / 3);
+    }
+    return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+};
+
+const rgbToHex = (r: number, g: number, b: number): string => {
+    return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+};
 
 export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageContent, onUpdate }) => {
     // Gallery state
@@ -82,6 +134,11 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
     const [editMode, setEditMode] = useState<EditMode>(null);
     const [cropRect, setCropRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
     const [resizeDimensions, setResizeDimensions] = useState<{ w: number; h: number }>({ w: 64, h: 64 });
+    const [colorizeValues, setColorizeValues] = useState<{ h: number; s: number; l: number; pickerL: number }>({ h: 0, s: 100, l: 100, pickerL: 50 });
+    const [savedColors, setSavedColors] = useState<{ h: number; s: number; l: number; pickerL: number }[]>(() => {
+        const saved = localStorage.getItem('retrosprite-saved-colors');
+        return saved ? JSON.parse(saved) : [];
+    });
     const [isCropping, setIsCropping] = useState(false);
     const [canvasZoom, setCanvasZoom] = useState(1);
     const cropStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -121,6 +178,11 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [undoStack]);
+
+    // Save colors to localStorage
+    useEffect(() => {
+        localStorage.setItem('retrosprite-saved-colors', JSON.stringify(savedColors));
+    }, [savedColors]);
 
     // Load thumbnails on mount
     useEffect(() => {
@@ -191,7 +253,53 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
 
             // Clear and redraw the sprite
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(img, 0, 0, sprite.w, sprite.h);
+
+            if (editMode === 'colorize') {
+                // Draw to a temporary canvas first to get pixel data
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = sprite.w;
+                tempCanvas.height = sprite.h;
+                const tempCtx = tempCanvas.getContext('2d', { alpha: true });
+                if (tempCtx) {
+                    tempCtx.drawImage(img, 0, 0);
+                    const imageData = tempCtx.getImageData(0, 0, sprite.w, sprite.h);
+                    const data = imageData.data;
+
+                    const hueVal = colorizeValues.h / 360; // 0-1
+                    const satVal = colorizeValues.s / 100; // 0-1
+                    const lightMult = colorizeValues.l / 100; // Multiplier
+
+                    for (let i = 0; i < data.length; i += 4) {
+                        if (data[i + 3] === 0) continue; // Skip transparent
+
+                        const r = data[i];
+                        const g = data[i + 1];
+                        const b = data[i + 2];
+
+                        let [h, s, l] = rgbToHsl(r, g, b);
+
+                        // Set Hue (Absolute)
+                        h = hueVal;
+
+                        // Set Saturation (Absolute)
+                        s = satVal;
+
+                        // Adjust Lightness (Relative Multiplier)
+                        l = Math.max(0, Math.min(1, l * lightMult));
+
+                        const [newR, newG, newB] = hslToRgb(h, s, l);
+
+                        data[i] = newR;
+                        data[i + 1] = newG;
+                        data[i + 2] = newB;
+                    }
+
+                    tempCtx.putImageData(imageData, 0, 0);
+                    ctx.drawImage(tempCanvas, 0, 0, sprite.w, sprite.h);
+                }
+            } else {
+                ctx.drawImage(img, 0, 0, sprite.w, sprite.h);
+            }
 
             // Draw crop overlay if in crop mode
             if (editMode === 'crop' && cropRect && cropRect.w > 0 && cropRect.h > 0) {
@@ -212,7 +320,7 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
             console.error('Failed to load sprite image for editing');
         };
         img.src = `data:image/png;base64,${sprite.thumbnail}`;
-    }, [viewMode, selectedSprite, editMode, cropRect, sprites]);
+    }, [viewMode, selectedSprite, editMode, cropRect, sprites, colorizeValues]);
 
     // Helper functions
     const prepareFilesForBackend = (json: NitroJSON, image: string): { [key: string]: number[] } => {
@@ -494,6 +602,36 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
         }
     };
 
+    const handleApplyColorize = async () => {
+        if (!selectedSprite) return;
+
+        try {
+            pushToUndoStack();
+            const files = prepareFilesForBackend(jsonContent, imageContent!);
+            
+            const result = await ColorizeSprite(
+                files, 
+                selectedSprite, 
+                colorizeValues.h, 
+                colorizeValues.s, 
+                colorizeValues.l
+            );
+
+            if (!result || Object.keys(result).length === 0) {
+                throw new Error('Backend returned empty response');
+            }
+
+            const { jsonContent: newJson, imageContent: newImage } = processBackendResponse(result);
+            onUpdate(newJson, newImage);
+            setViewMode('gallery');
+            setColorizeValues({ h: 0, s: 100, l: 100, pickerL: 50 });
+            showNotification('Sprite colorized successfully', 'success');
+        } catch (error) {
+            console.error('Failed to colorize sprite:', error);
+            showNotification(`Failed to colorize sprite: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        }
+    };
+
     if (!jsonContent.spritesheet) {
         return <Box p={2}>No spritesheet data found in this JSON.</Box>;
     }
@@ -742,6 +880,13 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
                                     >
                                         Flip
                                     </Button>
+                                    <Button
+                                        variant={editMode === 'colorize' ? 'contained' : 'outlined'}
+                                        startIcon={<PaletteIcon />}
+                                        onClick={() => setEditMode('colorize')}
+                                    >
+                                        Colorize
+                                    </Button>
                                 </Box>
 
                                 {/* Zoom controls */}
@@ -823,52 +968,225 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
                             )}
                         </Box>
 
-                        {/* Canvas area */}
-                        <Box sx={{
-                            flexGrow: 1,
-                            overflow: 'auto',
-                            bgcolor: '#2b2b2b',
-                            display: 'flex',
-                            alignItems: 'flex-start',
-                            justifyContent: 'flex-start',
-                            p: 2
-                        }}>
-                            {selectedSprite && sprites.find(s => s.name === selectedSprite) && (() => {
-                                const sprite = sprites.find(s => s.name === selectedSprite)!;
-                                const scaledWidth = sprite.w * canvasZoom;
-                                const scaledHeight = sprite.h * canvasZoom;
+                        {/* Content Area with Flex Row layout */}
+                        <Box sx={{ flexGrow: 1, display: 'flex', overflow: 'hidden' }}>
+                            
+                            {/* Left Panel: Color Picker (Colorize Mode) */}
+                            {editMode === 'colorize' && (
+                                <Paper sx={{ 
+                                    width: 250, 
+                                    p: 2, 
+                                    borderRight: '1px solid #555', 
+                                    display: 'flex', 
+                                    flexDirection: 'column', 
+                                    gap: 2,
+                                    overflow: 'auto',
+                                    alignItems: 'center'
+                                }}>
+                                    <Typography variant="subtitle1" gutterBottom>Color Picker</Typography>
+                                    <Typography variant="caption" color="text.secondary" align="center">
+                                        Pick a color to tint the sprite.
+                                    </Typography>
+                                    
+                                    <Sketch
+                                        color={(() => {
+                                            const [r, g, b] = hslToRgb(
+                                                colorizeValues.h / 360, 
+                                                colorizeValues.s / 100, 
+                                                colorizeValues.pickerL / 100
+                                            );
+                                            return rgbToHex(r, g, b);
+                                        })()}
+                                        disableAlpha
+                                        onChange={(color: any) => {
+                                            setColorizeValues(prev => ({
+                                                ...prev,
+                                                h: color.hsl.h,
+                                                s: color.hsl.s,
+                                                pickerL: color.hsl.l
+                                            }));
+                                        }}
+                                    />
 
-                                return (
-                                    <Box sx={{
-                                        width: scaledWidth,
-                                        height: scaledHeight,
-                                        minWidth: scaledWidth,
-                                        minHeight: scaledHeight,
-                                        position: 'relative',
-                                        boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
-                                        margin: 'auto'
-                                    }}>
-                                        <canvas
-                                            ref={canvasRef}
-                                            width={sprite.w}
-                                            height={sprite.h}
-                                            onMouseDown={handleCanvasMouseDown}
-                                            onMouseMove={handleCanvasMouseMove}
-                                            onMouseUp={handleCanvasMouseUp}
-                                            style={{
-                                                border: '2px solid #555',
-                                                cursor: editMode === 'crop' ? 'crosshair' : 'default',
-                                                transform: `scale(${canvasZoom})`,
-                                                transformOrigin: 'top left',
-                                                display: 'block',
-                                                backgroundColor: '#1a1a1a',
-                                                width: sprite.w,
-                                                height: sprite.h
-                                            }}
+                                    <Box sx={{ borderTop: '1px solid #444', pt: 2, mt: 2, width: '100%' }}>
+                                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                                            <Typography variant="subtitle2">Saved Colors</Typography>
+                                            <IconButton 
+                                                size="small" 
+                                                onClick={() => {
+                                                    const exists = savedColors.some(c => 
+                                                        c.h === colorizeValues.h && 
+                                                        c.s === colorizeValues.s && 
+                                                        c.l === colorizeValues.l &&
+                                                        c.pickerL === colorizeValues.pickerL
+                                                    );
+                                                    if (!exists) {
+                                                        setSavedColors([...savedColors, { ...colorizeValues }]);
+                                                    }
+                                                }}
+                                                title="Save current color"
+                                            >
+                                                <AddIcon />
+                                            </IconButton>
+                                        </Box>
+                                        
+                                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                                            {savedColors.length === 0 && (
+                                                <Typography variant="caption" color="text.secondary">No saved colors</Typography>
+                                            )}
+                                            {savedColors.map((color, index) => {
+                                                 const [r, g, b] = hslToRgb(color.h / 360, color.s / 100, color.pickerL / 100);
+                                                 const hex = rgbToHex(r, g, b);
+                                                 return (
+                                                    <Box
+                                                        key={index}
+                                                        sx={{
+                                                            width: 32,
+                                                            height: 32,
+                                                            borderRadius: 1,
+                                                            bgcolor: hex,
+                                                            cursor: 'pointer',
+                                                            border: '1px solid #555',
+                                                            position: 'relative',
+                                                            '&:hover .delete-btn': { display: 'flex' }
+                                                        }}
+                                                        onClick={() => setColorizeValues({ ...color })}
+                                                        title={`H:${Math.round(color.h)} S:${Math.round(color.s)} L:${Math.round(color.l)}`}
+                                                    >
+                                                        <Box
+                                                            className="delete-btn"
+                                                            sx={{
+                                                                display: 'none',
+                                                                position: 'absolute',
+                                                                top: -4,
+                                                                right: -4,
+                                                                bgcolor: 'error.main',
+                                                                borderRadius: '50%',
+                                                                width: 16,
+                                                                height: 16,
+                                                                alignItems: 'center',
+                                                                justifyContent: 'center',
+                                                                zIndex: 1
+                                                            }}
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setSavedColors(savedColors.filter((_, i) => i !== index));
+                                                            }}
+                                                        >
+                                                            <CloseIcon sx={{ fontSize: 10, color: 'white' }} />
+                                                        </Box>
+                                                    </Box>
+                                                 );
+                                            })}
+                                        </Box>
+                                    </Box>
+                                </Paper>
+                            )}
+
+                            {/* Center Panel: Canvas */}
+                            <Box sx={{
+                                flexGrow: 1,
+                                overflow: 'auto',
+                                bgcolor: '#2b2b2b',
+                                display: 'flex',
+                                alignItems: 'center', // Center vertically
+                                justifyContent: 'center', // Center horizontally
+                                p: 2,
+                                position: 'relative'
+                            }}>
+                                {selectedSprite && sprites.find(s => s.name === selectedSprite) && (() => {
+                                    const sprite = sprites.find(s => s.name === selectedSprite)!;
+                                    const scaledWidth = sprite.w * canvasZoom;
+                                    const scaledHeight = sprite.h * canvasZoom;
+
+                                    return (
+                                        <Box sx={{
+                                            width: scaledWidth,
+                                            height: scaledHeight,
+                                            minWidth: scaledWidth,
+                                            minHeight: scaledHeight,
+                                            boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+                                        }}>
+                                            <canvas
+                                                ref={canvasRef}
+                                                width={sprite.w}
+                                                height={sprite.h}
+                                                onMouseDown={handleCanvasMouseDown}
+                                                onMouseMove={handleCanvasMouseMove}
+                                                onMouseUp={handleCanvasMouseUp}
+                                                style={{
+                                                    border: '2px solid #555',
+                                                    cursor: editMode === 'crop' ? 'crosshair' : 'default',
+                                                    transform: `scale(${canvasZoom})`,
+                                                    transformOrigin: 'top left',
+                                                    display: 'block',
+                                                    backgroundColor: '#1a1a1a',
+                                                    width: sprite.w,
+                                                    height: sprite.h
+                                                }}
+                                            />
+                                        </Box>
+                                    );
+                                })()}
+                            </Box>
+
+                            {/* Right Panel: Sliders (Colorize Mode) */}
+                            {editMode === 'colorize' && (
+                                <Paper sx={{ 
+                                    width: 300, 
+                                    p: 2, 
+                                    borderLeft: '1px solid #555',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: 3,
+                                    overflow: 'auto'
+                                }}>
+                                    <Typography variant="subtitle1" gutterBottom>Adjustments</Typography>
+                                    
+                                    <Box>
+                                        <Typography variant="caption" gutterBottom>Hue ({Math.round(colorizeValues.h)}°)</Typography>
+                                        <Slider
+                                            value={colorizeValues.h}
+                                            onChange={(_, v) => setColorizeValues(prev => ({ ...prev, h: v as number }))}
+                                            min={0}
+                                            max={360}
+                                            valueLabelDisplay="auto"
                                         />
                                     </Box>
-                                );
-                            })()}
+                                    
+                                    <Box>
+                                        <Typography variant="caption" gutterBottom>Saturation ({Math.round(colorizeValues.s)}%)</Typography>
+                                        <Slider
+                                            value={colorizeValues.s}
+                                            onChange={(_, v) => setColorizeValues(prev => ({ ...prev, s: v as number }))}
+                                            min={0}
+                                            max={100}
+                                            valueLabelDisplay="auto"
+                                        />
+                                    </Box>
+                                    
+                                    <Box>
+                                        <Typography variant="caption" gutterBottom>Lightness Multiplier ({Math.round(colorizeValues.l)}%)</Typography>
+                                        <Slider
+                                            value={colorizeValues.l}
+                                            onChange={(_, v) => setColorizeValues(prev => ({ ...prev, l: v as number }))}
+                                            min={0}
+                                            max={200}
+                                            valueLabelDisplay="auto"
+                                        />
+                                    </Box>
+
+                                    <Button 
+                                        variant="contained" 
+                                        fullWidth 
+                                        onClick={handleApplyColorize}
+                                        size="large"
+                                    >
+                                        Apply Color
+                                    </Button>
+                                </Paper>
+                            )}
+
                         </Box>
                     </Box>
                 )}

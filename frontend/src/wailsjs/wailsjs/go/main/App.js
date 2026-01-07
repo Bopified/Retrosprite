@@ -10,6 +10,10 @@ export function CheckForUpdates() {
   return window['go']['main']['App']['CheckForUpdates']();
 }
 
+export function ColorizeSprite(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['ColorizeSprite'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function ConvertSWF() {
   return window['go']['main']['App']['ConvertSWF']();
 }

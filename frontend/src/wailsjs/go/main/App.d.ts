@@ -8,6 +8,8 @@ export function CheckForUpdates():Promise<main.UpdateInfo>;
 
 export function ConvertSWF():Promise<main.NitroResponse>;
 
+export function ColorizeSprite(arg1:Record<string, Array<number>>,arg2:string,arg3:number,arg4:number,arg5:number):Promise<Record<string, Array<number>>>;
+
 export function CropSprite(arg1:Record<string, Array<number>>,arg2:string,arg3:number,arg4:number,arg5:number,arg6:number):Promise<Record<string, Array<number>>>;
 
 export function ExtractMultipleSprites(arg1:Record<string, Array<number>>,arg2:Array<string>,arg3:boolean):Promise<main.ExtractSpritesResult>;

@@ -14,6 +14,10 @@ export function ConvertSWF() {
   return window['go']['main']['App']['ConvertSWF']();
 }
 
+export function ColorizeSprite(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['ColorizeSprite'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function CropSprite(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['CropSprite'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
