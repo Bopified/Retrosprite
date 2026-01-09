@@ -9,6 +9,7 @@ build/bin/
 # Frontend dependencies and build artifacts
 frontend/node_modules/
 frontend/dist/
+frontend/src/wailsjs/
 
 # Go
 *.test

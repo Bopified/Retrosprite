@@ -5,7 +5,7 @@
   "frontend:build": "npm run build",
   "frontend:dev:watcher": "npm run dev",
   "frontend:dir": "frontend",
-  "wailsjsdir": "./frontend/src/wailsjs",
+  "wailsjsdir": "./frontend/src",
   "version": "1.1.6",
   "author": {
     "name": "Bopified",
