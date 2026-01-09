@@ -756,9 +756,25 @@ function App() {
 
     const handleJsonUpdate = (newJson: NitroJSON, newImage?: string) => {
         const newJsonString = JSON.stringify(newJson, null, 4);
-        // Only set dirty if content actually changed
+        let hasChanges = false;
+
+        // Check if JSON changed
         if (newJsonString !== fileContent) {
             setFileContent(newJsonString);
+            hasChanges = true;
+        }
+
+        // Check if image changed
+        if (newImage && newJson.spritesheet?.meta?.image) {
+            const imageName = newJson.spritesheet.meta.image;
+            const currentImage = selectedProject ? projects[selectedProject].files[imageName] : null;
+            if (currentImage !== newImage) {
+                hasChanges = true;
+            }
+        }
+
+        // Set dirty flag if anything changed
+        if (hasChanges) {
             setIsDirty(true);
         }
 
@@ -814,7 +830,43 @@ function App() {
         const project = projects[selectedProject];
 
         try {
-            // Try to find the original name from the asset keys, as the file name might be different
+            // If there are unsaved changes, save them first to preserve all modifications
+            if (isDirty) {
+                const filesToSave = { ...project.files };
+
+                // Update current file content if it's a text file
+                if (selectedFile && isTextFile(selectedFile)) {
+                    filesToSave[selectedFile] = encodeContent(fileContent);
+                }
+
+                // Save to disk first
+                if (project.path.endsWith('.rspr')) {
+                    const rsprData: RsprProject = {
+                        version: "1.0",
+                        name: selectedProject.replace('.rspr', ''),
+                        files: filesToSave,
+                        settings: {
+                            lastOpenedFile: selectedFile || undefined
+                        }
+                    };
+                    await SaveProject(project.path, rsprData as any, rsprData.name);
+                } else {
+                    const nitroName = selectedProject.replace(/\.(nitro|swf|rspr)$/i, '');
+                    // @ts-ignore
+                    await SaveNitroFile(project.path, filesToSave as any, nitroName);
+                }
+
+                // Update in-memory state
+                setProjects(prev => ({
+                    ...prev,
+                    [selectedProject]: {
+                        ...prev[selectedProject],
+                        files: filesToSave
+                    }
+                }));
+            }
+
+            // Try to find the original name from the asset keys
             let oldName = "";
             if (parsedJson?.assets) {
                 const firstAssetKey = Object.keys(parsedJson.assets)[0];
@@ -831,6 +883,7 @@ function App() {
                 }
             }
 
+            // Now perform the rename with saved data
             // @ts-ignore - renameFurnitureData=true to rename all furniture references
             const result = await RenameNitroProject(project.path, newName, oldName, true);
             if (result) {

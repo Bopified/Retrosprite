@@ -3,7 +3,7 @@ import {
     Box, Paper, Typography, TextField, Button, IconButton, FormControl, InputLabel,
     Select, MenuItem, Dialog, DialogTitle, DialogContent, DialogActions, Checkbox,
     FormControlLabel, Radio, RadioGroup, Snackbar, Alert, Toolbar, CircularProgress,
-    Slider
+    Slider, List, ListItem, ListItemText, ListItemSecondaryAction, Chip, Divider
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import CloseIcon from '@mui/icons-material/Close';
@@ -19,6 +19,8 @@ import SelectAllIcon from '@mui/icons-material/SelectAll';
 import ZoomInIcon from '@mui/icons-material/ZoomIn';
 import ZoomOutIcon from '@mui/icons-material/ZoomOut';
 import AddIcon from '@mui/icons-material/Add';
+import DeleteIcon from '@mui/icons-material/Delete';
+import LayersIcon from '@mui/icons-material/Layers';
 import { Sketch } from '@uiw/react-color';
 import type { NitroJSON } from '../types';
 import {
@@ -112,9 +114,15 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
     const [viewMode, setViewMode] = useState<ViewMode>('gallery');
     const [selectedSprite, setSelectedSprite] = useState<string | null>(null);
 
+    // Layer management state
+    const [layerManagementOpen, setLayerManagementOpen] = useState(false);
+    const [layerToDelete, setLayerToDelete] = useState<{ name: string; spriteCount: number } | null>(null);
+
     // Dialog state
     const [extractDialogOpen, setExtractDialogOpen] = useState(false);
     const [replaceDialogOpen, setReplaceDialogOpen] = useState(false);
+    const [addSpriteDialogOpen, setAddSpriteDialogOpen] = useState(false);
+    const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
     // File watching state
     const [pendingChanges, setPendingChanges] = useState<Map<string, string>>(new Map());
@@ -161,7 +169,8 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
         const newStack = [...undoStack];
         const previousState = newStack.pop()!;
         setUndoStack(newStack);
-        onUpdate(previousState.json);
+        // Pass both JSON and image to restore complete state
+        onUpdate(previousState.json, previousState.image);
     };
 
     // Keyboard shortcut for undo
@@ -435,6 +444,264 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
         return Array.from(layers).sort();
     }, [sprites]);
 
+    // Layer management helper functions
+    const getLayerOrder = (): string[] => {
+        // Standard layer order: a, b, c, d, ... then sd (shadow)
+        const layerOrder = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'sd'];
+        return availableLayers.sort((a, b) => {
+            const aIdx = layerOrder.indexOf(a);
+            const bIdx = layerOrder.indexOf(b);
+            if (aIdx === -1 && bIdx === -1) return a.localeCompare(b);
+            if (aIdx === -1) return 1;
+            if (bIdx === -1) return -1;
+            return aIdx - bIdx;
+        });
+    };
+
+    const getNextLayerName = (): string => {
+        const letters = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+        const existingLayers = getLayerOrder().filter(l => l !== 'sd' && l !== 'icon');
+
+        for (const letter of letters) {
+            if (!existingLayers.includes(letter)) {
+                return letter;
+            }
+        }
+        return 'x'; // Fallback if all standard letters are used
+    };
+
+    const handleAddLayer = () => {
+        if (!jsonContent.spritesheet || !jsonContent.assets || !jsonContent.visualizations) return;
+
+        const newLayerName = getNextLayerName();
+        const furnitureName = jsonContent.name || 'furniture';
+        const size = jsonContent.visualizations[0]?.size || 64;
+
+        pushToUndoStack();
+
+        const newJson = JSON.parse(JSON.stringify(jsonContent)) as typeof jsonContent;
+
+        // Get existing directions
+        const directions = ['0', '2', '4', '6'];
+
+        // Add frames to spritesheet (placeholder frames)
+        if (!newJson.spritesheet) return;
+
+        directions.forEach(dir => {
+            const frameName = `${furnitureName}_${size}_${newLayerName}_${dir}_0`;
+
+            // Create a minimal placeholder frame
+            if (!newJson.spritesheet!.frames[frameName]) {
+                newJson.spritesheet!.frames[frameName] = {
+                    frame: { x: 0, y: 0, w: 1, h: 1 },
+                    rotated: false,
+                    trimmed: false,
+                    spriteSourceSize: { x: 0, y: 0, w: 1, h: 1 },
+                    sourceSize: { w: 1, h: 1 },
+                    pivot: { x: 0.5, y: 0.5 }
+                };
+            }
+        });
+
+        // Add assets
+        newJson.assets![`${furnitureName}_${size}_${newLayerName}_0_0`] = { x: 32, y: 32 };
+        newJson.assets![`${furnitureName}_${size}_${newLayerName}_2_0`] = { x: 32, y: 32 };
+        newJson.assets![`${furnitureName}_${size}_${newLayerName}_4_0`] = {
+            source: `${furnitureName}_${size}_${newLayerName}_2_0`,
+            x: 32,
+            y: 32,
+            flipH: true
+        };
+        newJson.assets![`${furnitureName}_${size}_${newLayerName}_6_0`] = {
+            source: `${furnitureName}_${size}_${newLayerName}_0_0`,
+            x: 32,
+            y: 32,
+            flipH: true
+        };
+
+        // Update visualization layer count
+        if (newJson.visualizations && newJson.visualizations[0]) {
+            const viz = newJson.visualizations[0];
+            const newLayerCount = getLayerOrder().length + 1;
+            viz.layerCount = newLayerCount;
+
+            // Add layer properties
+            if (!viz.layers) viz.layers = {};
+            const layerIndex = (newLayerCount - 1).toString();
+            viz.layers[layerIndex] = {
+                z: newLayerCount * 10,
+                alpha: 255
+            };
+        }
+
+        onUpdate(newJson);
+        showNotification(`Layer "${newLayerName}" added successfully`, 'success');
+    };
+
+    const handleRemoveLayer = (layerName: string, spriteCount: number) => {
+        setLayerToDelete({ name: layerName, spriteCount });
+    };
+
+    const confirmRemoveLayer = () => {
+        if (!layerToDelete || !jsonContent.spritesheet || !jsonContent.assets || !jsonContent.visualizations) return;
+
+        const layerName = layerToDelete.name;
+        pushToUndoStack();
+
+        const newJson = JSON.parse(JSON.stringify(jsonContent)) as typeof jsonContent;
+
+        // Remove frames from spritesheet
+        const framesToRemove: string[] = [];
+        Object.keys(newJson.spritesheet!.frames).forEach(frameName => {
+            if (frameName.includes(`_${layerName}_`)) {
+                framesToRemove.push(frameName);
+            }
+        });
+
+        framesToRemove.forEach(frameName => {
+            delete newJson.spritesheet!.frames[frameName];
+        });
+
+        // Remove assets
+        const assetsToRemove: string[] = [];
+        Object.keys(newJson.assets!).forEach(assetName => {
+            if (assetName.includes(`_${layerName}_`)) {
+                assetsToRemove.push(assetName);
+            }
+        });
+
+        assetsToRemove.forEach(assetName => {
+            delete newJson.assets![assetName];
+        });
+
+        // Update visualization layer count
+        if (newJson.visualizations && newJson.visualizations[0]) {
+            const viz = newJson.visualizations[0];
+            const newLayerCount = Math.max(0, viz.layerCount - 1);
+            viz.layerCount = newLayerCount;
+
+            // Remove layer properties for the highest layer index
+            if (viz.layers) {
+                const layerKeys = Object.keys(viz.layers).map(k => parseInt(k)).sort((a, b) => b - a);
+                if (layerKeys.length > 0) {
+                    const highestLayerKey = layerKeys[0].toString();
+                    delete viz.layers[highestLayerKey];
+                }
+            }
+        }
+
+        onUpdate(newJson);
+        showNotification(`Layer "${layerName}" removed successfully`, 'success');
+        setLayerToDelete(null);
+    };
+
+    const handleDeleteSprites = () => {
+        if (selectedSprites.length === 0) return;
+        setDeleteConfirmOpen(true);
+    };
+
+    const confirmDeleteSprites = () => {
+        if (!jsonContent.spritesheet || !jsonContent.assets) return;
+
+        pushToUndoStack();
+
+        const newJson = JSON.parse(JSON.stringify(jsonContent)) as typeof jsonContent;
+
+        selectedSprites.forEach(spriteName => {
+            // Remove from spritesheet frames
+            if (newJson.spritesheet!.frames[spriteName]) {
+                delete newJson.spritesheet!.frames[spriteName];
+            }
+
+            // Find and remove corresponding asset
+            // Sprite name format: {furniture}_{size}_{layer}_{direction}_{frame}
+            // Asset name format: {furniture}_{size}_{layer}_{direction}_{frame}
+            // They might match exactly, or the asset might have .png extension
+            let assetKey = spriteName;
+            if (spriteName.endsWith('.png')) {
+                assetKey = spriteName.slice(0, -4);
+            }
+
+            // Remove the asset
+            if (newJson.assets![assetKey]) {
+                delete newJson.assets![assetKey];
+            }
+
+            // Also check for references (source property in mirrored directions)
+            Object.keys(newJson.assets!).forEach(key => {
+                const asset = newJson.assets![key];
+                if (asset.source === assetKey) {
+                    delete newJson.assets![key];
+                }
+            });
+        });
+
+        onUpdate(newJson);
+        showNotification(`${selectedSprites.length} sprite(s) deleted successfully`, 'success');
+        setSelectedSprites([]);
+        setDeleteConfirmOpen(false);
+    };
+
+    const handleAddSprite = (layer: string, direction: string, frame: string) => {
+        if (!jsonContent.spritesheet || !jsonContent.assets || !jsonContent.visualizations) return;
+
+        pushToUndoStack();
+
+        const newJson = JSON.parse(JSON.stringify(jsonContent)) as typeof jsonContent;
+        const furnitureName = jsonContent.name || 'furniture';
+        const size = jsonContent.visualizations[0]?.size || 64;
+
+        const frameName = `${furnitureName}_${size}_${layer}_${direction}_${frame}`;
+        const assetName = frameName;
+
+        // Check if sprite already exists
+        if (newJson.spritesheet!.frames[frameName]) {
+            showNotification(`Sprite "${frameName}" already exists`, 'error');
+            return;
+        }
+
+        // Add frame to spritesheet (placeholder)
+        newJson.spritesheet!.frames[frameName] = {
+            frame: { x: 0, y: 0, w: 1, h: 1 },
+            rotated: false,
+            trimmed: false,
+            spriteSourceSize: { x: 0, y: 0, w: 1, h: 1 },
+            sourceSize: { w: 1, h: 1 },
+            pivot: { x: 0.5, y: 0.5 }
+        };
+
+        // Add asset entry
+        // For directions 0 and 2, create normal assets
+        // For directions 4 and 6, create mirrored references
+        if (direction === '0' || direction === '2') {
+            newJson.assets![assetName] = { x: 32, y: 32 };
+        } else if (direction === '4') {
+            // Mirror of direction 2
+            const sourceDirection = '2';
+            const sourceName = `${furnitureName}_${size}_${layer}_${sourceDirection}_${frame}`;
+            newJson.assets![assetName] = {
+                source: sourceName,
+                x: 32,
+                y: 32,
+                flipH: true
+            };
+        } else if (direction === '6') {
+            // Mirror of direction 0
+            const sourceDirection = '0';
+            const sourceName = `${furnitureName}_${size}_${layer}_${sourceDirection}_${frame}`;
+            newJson.assets![assetName] = {
+                source: sourceName,
+                x: 32,
+                y: 32,
+                flipH: true
+            };
+        }
+
+        onUpdate(newJson);
+        showNotification(`Sprite "${frameName}" added successfully`, 'success');
+        setAddSpriteDialogOpen(false);
+    };
+
     // Event handlers
     const handleSpriteSelect = (spriteName: string) => {
         if (selectedSprites.includes(spriteName)) {
@@ -662,67 +929,116 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
     return (
         <Box sx={{ display: 'flex', height: '100%', flexDirection: 'column' }}>
             {/* Toolbar */}
-            <Toolbar sx={{ borderBottom: '1px solid #555', gap: 2 }}>
+            <Toolbar sx={{ borderBottom: '1px solid #555', gap: 1, minHeight: '56px !important' }}>
                 {viewMode === 'gallery' ? (
                     <>
-                        <Typography variant="h6">Sprites ({filteredSprites.length})</Typography>
+                        <Typography variant="h6" sx={{ mr: 2 }}>Sprites ({filteredSprites.length})</Typography>
                         <Button
                             variant="outlined"
-                            startIcon={<SelectAllIcon />}
+                            size="small"
+                            startIcon={<SelectAllIcon fontSize="small" />}
                             onClick={selectedSprites.length === filteredSprites.length ? handleDeselectAll : handleSelectAll}
+                            sx={{ textTransform: 'none' }}
                         >
-                            {selectedSprites.length === filteredSprites.length ? 'Deselect All' : 'Select All'}
+                            {selectedSprites.length === filteredSprites.length ? 'Deselect' : 'Select All'}
                         </Button>
                         <Button
                             variant="contained"
-                            startIcon={<ImageIcon />}
+                            size="small"
+                            startIcon={<ImageIcon fontSize="small" />}
                             onClick={handleExtractClick}
                             disabled={selectedSprites.length === 0}
+                            sx={{ textTransform: 'none' }}
                         >
                             Extract
                         </Button>
                         <Button
                             variant="contained"
-                            startIcon={<SwapHorizIcon />}
+                            size="small"
+                            startIcon={<SwapHorizIcon fontSize="small" />}
                             onClick={handleReplaceClick}
                             disabled={selectedSprites.length !== 1}
+                            sx={{ textTransform: 'none' }}
                         >
                             Replace
                         </Button>
                         <Button
                             variant="contained"
-                            startIcon={<CropIcon />}
+                            size="small"
+                            startIcon={<CropIcon fontSize="small" />}
                             onClick={handleEditClick}
                             disabled={selectedSprites.length !== 1}
+                            sx={{ textTransform: 'none' }}
                         >
                             Edit
                         </Button>
                         <Button
+                            variant="contained"
+                            size="small"
+                            color="error"
+                            startIcon={<DeleteIcon fontSize="small" />}
+                            onClick={handleDeleteSprites}
+                            disabled={selectedSprites.length === 0}
+                            sx={{ textTransform: 'none' }}
+                        >
+                            Delete
+                        </Button>
+                        <Button
+                            variant="contained"
+                            size="small"
+                            color="success"
+                            startIcon={<AddIcon fontSize="small" />}
+                            onClick={() => setAddSpriteDialogOpen(true)}
+                            sx={{ textTransform: 'none' }}
+                        >
+                            Add
+                        </Button>
+                        <Box sx={{ borderLeft: '1px solid #555', height: 32, mx: 1 }} />
+                        <Button
                             variant="outlined"
-                            startIcon={<UndoIcon />}
+                            size="small"
+                            startIcon={<LayersIcon fontSize="small" />}
+                            onClick={() => setLayerManagementOpen(true)}
+                            sx={{ textTransform: 'none' }}
+                        >
+                            Layers
+                        </Button>
+                        <Button
+                            variant="outlined"
+                            size="small"
+                            startIcon={<UndoIcon fontSize="small" />}
                             onClick={performUndo}
                             disabled={!canUndo}
+                            sx={{ textTransform: 'none' }}
                         >
                             Undo
                         </Button>
                         <Box sx={{ flexGrow: 1 }} />
-                        <Typography variant="caption" color="text.secondary">
-                            {selectedSprites.length} selected
-                        </Typography>
+                        <Chip
+                            label={`${selectedSprites.length} selected`}
+                            size="small"
+                            sx={{ bgcolor: selectedSprites.length > 0 ? 'primary.main' : 'rgba(255,255,255,0.1)' }}
+                        />
                     </>
                 ) : (
                     <>
                         <Typography variant="h6">Editing: {selectedSprite}</Typography>
                         <Button
                             variant="outlined"
-                            startIcon={<UndoIcon />}
+                            size="small"
+                            startIcon={<UndoIcon fontSize="small" />}
                             onClick={performUndo}
                             disabled={!canUndo}
+                            sx={{ textTransform: 'none' }}
                         >
                             Undo
                         </Button>
                         <Box sx={{ flexGrow: 1 }} />
-                        <Button onClick={() => setViewMode('gallery')}>
+                        <Button
+                            size="small"
+                            onClick={() => setViewMode('gallery')}
+                            sx={{ textTransform: 'none' }}
+                        >
                             Back to Gallery
                         </Button>
                     </>
@@ -1215,6 +1531,189 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
                 )}
             </Box>
 
+            {/* Layer Management Dialog */}
+            <Dialog
+                open={layerManagementOpen}
+                onClose={() => setLayerManagementOpen(false)}
+                maxWidth="sm"
+                fullWidth
+            >
+                <DialogTitle>
+                    <Box display="flex" alignItems="center" gap={1}>
+                        <LayersIcon />
+                        <Typography variant="h6">Manage Sprite Layers</Typography>
+                    </Box>
+                </DialogTitle>
+                <DialogContent>
+                    <Typography variant="body2" color="text.secondary" paragraph>
+                        Sprite layers define the visual composition of your furniture. Each layer (a, b, c, etc.)
+                        represents a separate renderable element that can be stacked and positioned independently.
+                    </Typography>
+
+                    <Divider sx={{ my: 2 }} />
+
+                    <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+                        <Typography variant="subtitle1">Current Layers</Typography>
+                        <Button
+                            variant="contained"
+                            size="small"
+                            startIcon={<AddIcon />}
+                            onClick={handleAddLayer}
+                        >
+                            Add Layer
+                        </Button>
+                    </Box>
+
+                    {getLayerOrder().length === 0 ? (
+                        <Typography color="text.secondary" variant="body2">
+                            No layers found. Click "Add Layer" to create one.
+                        </Typography>
+                    ) : (
+                        <List sx={{ bgcolor: 'background.paper', borderRadius: 1 }}>
+                            {getLayerOrder().map((layerName, index) => {
+                                // Count sprites for this layer
+                                const spriteCount = sprites.filter(s => extractLayer(s.name) === layerName).length;
+                                const layerIndex = index;
+                                const zIndex = jsonContent.visualizations?.[0]?.layers?.[layerIndex.toString()]?.z ?? layerIndex * 10;
+
+                                return (
+                                    <ListItem
+                                        key={layerName}
+                                        sx={{
+                                            border: '1px solid #444',
+                                            borderRadius: 1,
+                                            mb: 1,
+                                            bgcolor: '#2b3a52'
+                                        }}
+                                    >
+                                        <ListItemText
+                                            primary={
+                                                <Box display="flex" alignItems="center" gap={1}>
+                                                    <Typography variant="subtitle1" sx={{ fontWeight: 'bold', color: '#90caf9' }}>
+                                                        Layer {layerName.toUpperCase()}
+                                                    </Typography>
+                                                    <Chip
+                                                        label={`${spriteCount} sprites`}
+                                                        size="small"
+                                                        sx={{ ml: 1 }}
+                                                    />
+                                                </Box>
+                                            }
+                                            secondary={
+                                                <Typography variant="caption" color="text.secondary">
+                                                    Z-Index: {zIndex} • Order: {index + 1} of {getLayerOrder().length}
+                                                </Typography>
+                                            }
+                                        />
+                                        <ListItemSecondaryAction>
+                                            <IconButton
+                                                edge="end"
+                                                onClick={() => handleRemoveLayer(layerName, spriteCount)}
+                                                sx={{ color: '#f48fb1' }}
+                                            >
+                                                <DeleteIcon />
+                                            </IconButton>
+                                        </ListItemSecondaryAction>
+                                    </ListItem>
+                                );
+                            })}
+                        </List>
+                    )}
+
+                    <Box sx={{ mt: 3, p: 2, bgcolor: 'rgba(144, 202, 249, 0.05)', borderRadius: 1, border: '1px solid rgba(144, 202, 249, 0.2)' }}>
+                        <Typography variant="subtitle2" gutterBottom>Layer Naming Convention</Typography>
+                        <Typography variant="body2" color="text.secondary">
+                            Layers are automatically named in alphabetical order: <strong>a, b, c, d...</strong>
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                            Special layers: <strong>sd</strong> (shadow), <strong>icon</strong> (furniture icon)
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                            Z-Index determines the stacking order, with higher values appearing on top.
+                        </Typography>
+                    </Box>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setLayerManagementOpen(false)}>
+                        Close
+                    </Button>
+                </DialogActions>
+            </Dialog>
+
+            {/* Layer Deletion Confirmation Dialog */}
+            <Dialog
+                open={!!layerToDelete}
+                onClose={() => setLayerToDelete(null)}
+                maxWidth="sm"
+            >
+                <DialogTitle>Delete Layer?</DialogTitle>
+                <DialogContent>
+                    <Typography>
+                        Are you sure you want to remove layer <strong>{layerToDelete?.name.toUpperCase()}</strong>?
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+                        This will delete all <strong>{layerToDelete?.spriteCount} sprites</strong> in this layer.
+                    </Typography>
+                    <Typography variant="body2" color="warning.main" sx={{ mt: 2 }}>
+                        This action can be undone with the Undo button.
+                    </Typography>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setLayerToDelete(null)}>
+                        Cancel
+                    </Button>
+                    <Button onClick={confirmRemoveLayer} variant="contained" color="error">
+                        Delete Layer
+                    </Button>
+                </DialogActions>
+            </Dialog>
+
+            {/* Add Sprite Dialog */}
+            <AddSpriteDialog
+                open={addSpriteDialogOpen}
+                onClose={() => setAddSpriteDialogOpen(false)}
+                onAdd={handleAddSprite}
+                availableLayers={getLayerOrder()}
+            />
+
+            {/* Delete Confirmation Dialog */}
+            <Dialog
+                open={deleteConfirmOpen}
+                onClose={() => setDeleteConfirmOpen(false)}
+                maxWidth="sm"
+            >
+                <DialogTitle>Delete Sprites?</DialogTitle>
+                <DialogContent>
+                    <Typography>
+                        Are you sure you want to delete {selectedSprites.length} sprite(s)?
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+                        This will remove the sprites from both the spritesheet and asset definitions.
+                        This action can be undone with the Undo button.
+                    </Typography>
+                    {selectedSprites.length <= 5 && (
+                        <Box sx={{ mt: 2 }}>
+                            <Typography variant="caption" color="text.secondary">
+                                Sprites to delete:
+                            </Typography>
+                            {selectedSprites.map(name => (
+                                <Typography key={name} variant="caption" display="block" sx={{ pl: 2 }}>
+                                    • {name}
+                                </Typography>
+                            ))}
+                        </Box>
+                    )}
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setDeleteConfirmOpen(false)}>
+                        Cancel
+                    </Button>
+                    <Button onClick={confirmDeleteSprites} variant="contained" color="error">
+                        Delete
+                    </Button>
+                </DialogActions>
+            </Dialog>
+
             {/* Extract Dialog */}
             <ExtractDialog
                 open={extractDialogOpen}
@@ -1273,6 +1772,106 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
                 </Alert>
             </Snackbar>
         </Box>
+    );
+};
+
+// Add Sprite Dialog Component
+interface AddSpriteDialogProps {
+    open: boolean;
+    onClose: () => void;
+    onAdd: (layer: string, direction: string, frame: string) => void;
+    availableLayers: string[];
+}
+
+const AddSpriteDialog: React.FC<AddSpriteDialogProps> = ({ open, onClose, onAdd, availableLayers }) => {
+    const [layer, setLayer] = useState('');
+    const [direction, setDirection] = useState('0');
+    const [frame, setFrame] = useState('0');
+
+    useEffect(() => {
+        if (open && availableLayers.length > 0 && !layer) {
+            setLayer(availableLayers[0]);
+        }
+    }, [open, availableLayers]);
+
+    const handleAdd = () => {
+        if (!layer) return;
+        onAdd(layer, direction, frame);
+        // Reset form
+        setDirection('0');
+        setFrame('0');
+    };
+
+    const handleClose = () => {
+        onClose();
+        setDirection('0');
+        setFrame('0');
+    };
+
+    return (
+        <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
+            <DialogTitle>Add New Sprite</DialogTitle>
+            <DialogContent>
+                <Typography variant="body2" color="text.secondary" paragraph>
+                    Create a new sprite entry with a placeholder frame. You can replace it later with actual image data.
+                </Typography>
+
+                <FormControl fullWidth sx={{ mt: 2, mb: 2 }}>
+                    <InputLabel>Layer</InputLabel>
+                    <Select
+                        value={layer}
+                        onChange={(e) => setLayer(e.target.value)}
+                        label="Layer"
+                    >
+                        {availableLayers.filter(l => l !== 'icon').map(l => (
+                            <MenuItem key={l} value={l}>{l.toUpperCase()}</MenuItem>
+                        ))}
+                    </Select>
+                </FormControl>
+
+                <FormControl fullWidth sx={{ mb: 2 }}>
+                    <InputLabel>Direction</InputLabel>
+                    <Select
+                        value={direction}
+                        onChange={(e) => setDirection(e.target.value)}
+                        label="Direction"
+                    >
+                        <MenuItem value="0">0 (South-East)</MenuItem>
+                        <MenuItem value="2">2 (South-West)</MenuItem>
+                        <MenuItem value="4">4 (North-West)</MenuItem>
+                        <MenuItem value="6">6 (North-East)</MenuItem>
+                    </Select>
+                </FormControl>
+
+                <TextField
+                    label="Frame Number"
+                    type="number"
+                    fullWidth
+                    value={frame}
+                    onChange={(e) => setFrame(e.target.value)}
+                    inputProps={{ min: 0 }}
+                    helperText="Usually 0 for static furniture, higher numbers for animations"
+                />
+
+                <Box sx={{ mt: 3, p: 2, bgcolor: 'rgba(144, 202, 249, 0.05)', borderRadius: 1, border: '1px solid rgba(144, 202, 249, 0.2)' }}>
+                    <Typography variant="subtitle2" gutterBottom>Note</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                        Directions 4 and 6 are automatically mirrored from directions 2 and 0 respectively.
+                        The sprite will be created with a 1×1 pixel placeholder that you should replace with actual artwork.
+                    </Typography>
+                </Box>
+            </DialogContent>
+            <DialogActions>
+                <Button onClick={handleClose}>Cancel</Button>
+                <Button
+                    onClick={handleAdd}
+                    variant="contained"
+                    disabled={!layer}
+                >
+                    Add Sprite
+                </Button>
+            </DialogActions>
+        </Dialog>
     );
 };
 
