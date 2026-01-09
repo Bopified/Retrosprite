@@ -613,8 +613,10 @@ export const FurniturePreview: React.FC<FurniturePreviewProps> = ({
     const getIconSprite = () => {
         if (!jsonContent.spritesheet) return null;
 
-        // Find the icon frame (ends with _icon_a)
-        const iconFrameName = Object.keys(frames).find(key => key.endsWith('_icon_a'));
+        // Find the icon frame (ends with _icon_a or _icon_a.png)
+        const iconFrameName = Object.keys(frames).find(key =>
+            key.endsWith('_icon_a') || key.endsWith('_icon_a.png')
+        );
         if (!iconFrameName) return null;
 
         const frameData = frames[iconFrameName];

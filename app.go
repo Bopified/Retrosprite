@@ -398,10 +398,10 @@ func extractIconFromNitro(files map[string][]byte, furnitureName string) ([]byte
 		return nil, fmt.Errorf("no spritesheet data found")
 	}
 
-	// Find the icon frame (ends with _icon_a)
+	// Find the icon frame (ends with _icon_a or _icon_a.png)
 	var iconFrame *SpritesheetFrame
 	for frameName, frame := range assetData.Spritesheet.Frames {
-		if strings.HasSuffix(frameName, "_icon_a") {
+		if strings.HasSuffix(frameName, "_icon_a") || strings.HasSuffix(frameName, "_icon_a.png") {
 			iconFrame = &frame
 			break
 		}
