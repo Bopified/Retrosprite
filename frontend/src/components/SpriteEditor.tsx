@@ -659,6 +659,8 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
         });
 
         // Clean up animation definitions that reference deleted frames
+        const emptyAnimationStates = new Set<number>();
+
         if (newJson.visualizations) {
             newJson.visualizations.forEach(viz => {
                 if (viz.animations) {
@@ -699,8 +701,36 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
                                     }
                                 }
                             });
+
+                            // Check if this animation state is now completely empty
+                            if (Object.keys(anim.layers).length === 0) {
+                                emptyAnimationStates.add(parseInt(animKey));
+                            }
                         }
                     });
+
+                    // Remove empty animation states and renumber remaining ones
+                    if (emptyAnimationStates.size > 0) {
+                        const sortedEmptyStates = Array.from(emptyAnimationStates).sort((a, b) => a - b);
+
+                        // Delete empty animation states
+                        sortedEmptyStates.forEach(state => {
+                            delete viz.animations![state.toString()];
+                        });
+
+                        // Renumber remaining animation states to fill gaps
+                        const remainingStates = Object.keys(viz.animations)
+                            .map(k => parseInt(k))
+                            .sort((a, b) => a - b);
+
+                        if (remainingStates.length > 0) {
+                            const newAnimations: typeof viz.animations = {};
+                            remainingStates.forEach((oldState, index) => {
+                                newAnimations[index.toString()] = viz.animations![oldState.toString()];
+                            });
+                            viz.animations = newAnimations;
+                        }
+                    }
                 }
             });
         }
