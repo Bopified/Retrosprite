@@ -21,10 +21,11 @@ type Sprite struct {
 }
 
 type ParsedSWF struct {
-	Images     map[uint16]*swf.ImageTag
-	BinaryData map[uint16]*swf.DefineBinaryDataTag
-	Symbols    map[string]uint16
-	ClassNames map[uint16]string
+	Images       map[uint16]*swf.ImageTag
+	BinaryData   map[uint16]*swf.DefineBinaryDataTag
+	Symbols      map[string]uint16
+	ClassNames   map[uint16]string
+	ImageSources map[string]string // Maps asset names to sprite names
 }
 
 func ConvertSWFToNitro(swfPath string, defaultZ float64) (*NitroFile, error) {
@@ -47,10 +48,11 @@ func ConvertSWFBytesToNitro(swfData []byte, filename string, defaultZ float64) (
 	}
 
 	parsed := &ParsedSWF{
-		Images:     make(map[uint16]*swf.ImageTag),
-		BinaryData: make(map[uint16]*swf.DefineBinaryDataTag),
-		Symbols:    make(map[string]uint16),
-		ClassNames: make(map[uint16]string),
+		Images:       make(map[uint16]*swf.ImageTag),
+		BinaryData:   make(map[uint16]*swf.DefineBinaryDataTag),
+		Symbols:      make(map[string]uint16),
+		ClassNames:   make(map[uint16]string),
+		ImageSources: make(map[string]string),
 	}
 
 	for _, tag := range tags {
@@ -62,7 +64,25 @@ func ConvertSWFBytesToNitro(swfData []byte, filename string, defaultZ float64) (
 		case *swf.SymbolClassTag:
 			for _, sym := range t.Symbols {
 				parsed.Symbols[sym.Name] = sym.ID
-				parsed.ClassNames[sym.ID] = sym.Name
+				// Only set className for the first symbol we see for each ID
+				// This ensures we use the canonical image name, not aliases
+				if _, exists := parsed.ClassNames[sym.ID]; !exists {
+					parsed.ClassNames[sym.ID] = sym.Name
+				}
+			}
+		}
+	}
+
+	// Build IMAGE_SOURCES map: maps asset names to actual sprite names
+	// When multiple symbols point to the same character ID with different names,
+	// we create source references
+	for symbolName, charID := range parsed.Symbols {
+		if _, exists := parsed.Images[charID]; exists {
+			actualClassName := parsed.ClassNames[charID]
+			// If symbol name differs from the image's class name, create a reference
+			if symbolName != actualClassName {
+				// Strip common prefix (document class) if present
+				parsed.ImageSources[symbolName] = actualClassName
 			}
 		}
 	}
@@ -100,23 +120,7 @@ func ConvertSWFBytesToNitro(swfData []byte, filename string, defaultZ float64) (
 	findXML("index", &indexXML)
 	findXML("manifest", &manifestXML)
 
-	var sprites []*Sprite
-
-	for id, imgTag := range parsed.Images {
-		name, hasName := parsed.ClassNames[id]
-		if !hasName {
-			name = fmt.Sprintf("sprite_%d", id)
-		}
-
-		img, err := imgTag.ToImage()
-		if err != nil {
-			fmt.Printf("Warning: Failed to decode image %d: %v\n", id, err)
-			continue
-		}
-
-		sprites = append(sprites, &Sprite{Name: name, Img: img})
-	}
-
+	// Extract base name early so we can use it for sprite filtering
 	baseName := strings.TrimSuffix(filename, ".swf")
 	if idx := strings.LastIndex(baseName, "/"); idx != -1 {
 		baseName = baseName[idx+1:]
@@ -126,13 +130,66 @@ func ConvertSWFBytesToNitro(swfData []byte, filename string, defaultZ float64) (
 	}
 	baseName = strings.TrimSuffix(baseName, ".swf")
 
+	// Build a set of sprite names that are actually needed (assets without source references)
+	neededSprites := make(map[string]bool)
+	if assetsXML != nil {
+		for _, asset := range assetsXML.Assets {
+			// Skip shadow and 32px assets
+			if strings.HasPrefix(asset.Name, "sh_") || strings.Contains(asset.Name, "_32_") {
+				continue
+			}
+			// If asset has no source, it needs its own sprite in the spritesheet
+			if asset.Source == "" {
+				neededSprites[asset.Name] = true
+			} else {
+				// If it has a source, mark the source as needed
+				neededSprites[asset.Source] = true
+			}
+		}
+	}
+
+	var sprites []*Sprite
+
+	// Only include sprites that match assets without source references
+	for symbolName, charID := range parsed.Symbols {
+		imgTag, exists := parsed.Images[charID]
+		if !exists {
+			continue
+		}
+
+		// Strip the document class prefix to get the asset name
+		// symbolName format: "xmas_c22_teleskilift_xmas_c22_teleskilift_64_b_4_0"
+		// assetName format: "xmas_c22_teleskilift_64_b_4_0"
+		// We need to strip the first "xmas_c22_teleskilift_" prefix
+		assetName := symbolName
+		if baseName != "" {
+			prefix := baseName + "_"
+			if strings.HasPrefix(symbolName, prefix) {
+				assetName = strings.TrimPrefix(symbolName, prefix)
+			}
+		}
+
+		// Only include this sprite if it's needed by an asset
+		if !neededSprites[assetName] {
+			continue
+		}
+
+		img, err := imgTag.ToImage()
+		if err != nil {
+			fmt.Printf("Warning: Failed to decode image %d: %v\n", charID, err)
+			continue
+		}
+
+		sprites = append(sprites, &Sprite{Name: symbolName, Img: img})
+	}
+
 	sheetName := baseName + ".png"
 	sheetImg, sheetData, err := packSprites(sprites, sheetName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to pack sprites: %w", err)
 	}
 
-	assetData := MapXMLtoAssetData(assetsXML, visXML, logicXML, indexXML, manifestXML, defaultZ)
+	assetData := MapXMLtoAssetData(assetsXML, visXML, logicXML, indexXML, manifestXML, defaultZ, parsed.ImageSources)
 	assetData.Spritesheet = sheetData
 	assetData.Name = baseName // Ensure name is set
 

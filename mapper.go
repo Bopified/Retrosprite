@@ -12,6 +12,7 @@ func MapXMLtoAssetData(
 	index *IndexXML,
 	manifest *ManifestXML,
 	defaultZ float64,
+	imageSources map[string]string,
 ) *AssetData {
 	data := &AssetData{
 		Assets:         make(map[string]Asset),
@@ -26,7 +27,7 @@ func MapXMLtoAssetData(
 	}
 
 	if assets != nil {
-		mapAssets(assets, data)
+		mapAssets(assets, data, imageSources)
 	}
 
 	if vis != nil {
@@ -60,7 +61,7 @@ func MapXMLtoAssetData(
 func mapLogic(xml *LogicXML, data *AssetData) {
 }
 
-func mapAssets(xml *AssetsXML, data *AssetData) {
+func mapAssets(xml *AssetsXML, data *AssetData, imageSources map[string]string) {
 	for _, asset := range xml.Assets {
 		if strings.HasPrefix(asset.Name, "sh_") || strings.Contains(asset.Name, "_32_") {
 			continue
@@ -74,7 +75,20 @@ func mapAssets(xml *AssetsXML, data *AssetData) {
 			FlipV:       asset.FlipV,
 			UsesPalette: asset.UsesPalette,
 		}
-		if a.Source == "" {
+
+		// Resolve source references using IMAGE_SOURCES map
+		// This matches nitro-converter logic in AssetMapper.ts lines 54-64
+		if a.Source != "" {
+			// If the source is in imageSources, resolve it
+			if resolved, exists := imageSources[a.Source]; exists {
+				a.Source = resolved
+			}
+		}
+
+		// Check if the asset name itself is in imageSources
+		// This creates the source reference for assets
+		if resolved, exists := imageSources[asset.Name]; exists {
+			a.Source = resolved
 		}
 
 		data.Assets[asset.Name] = a
