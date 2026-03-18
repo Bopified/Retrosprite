@@ -1046,7 +1046,6 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
                             size="small"
                             startIcon={<ImageIcon fontSize="small" />}
                             onClick={handleExtractClick}
-                            disabled={selectedSprites.length === 0}
                             sx={{ textTransform: 'none' }}
                         >
                             Extract
@@ -1056,7 +1055,7 @@ export const SpriteEditor: React.FC<SpriteEditorProps> = ({ jsonContent, imageCo
                             size="small"
                             startIcon={<SwapHorizIcon fontSize="small" />}
                             onClick={handleReplaceClick}
-                            disabled={selectedSprites.length !== 1}
+                            disabled={selectedSprites.length > 1}
                             sx={{ textTransform: 'none' }}
                         >
                             Replace
