@@ -912,25 +912,42 @@ func (a *App) ReplaceSingleSprite(files map[string][]byte, spriteName string, ne
 		return nil, fmt.Errorf("failed to decode spritesheet PNG: %w", err)
 	}
 
-	// Create new spritesheet by copying old one
-	newSpritesheet := image.NewRGBA(img.Bounds())
+	// Get new sprite dimensions
+	newBounds := newSprite.Bounds()
+	newW := newBounds.Dx()
+	newH := newBounds.Dy()
+
+	// Determine if canvas needs to expand to fit the new sprite
+	oldSheetW := img.Bounds().Dx()
+	oldSheetH := img.Bounds().Dy()
+	newSheetW := oldSheetW
+	newSheetH := oldSheetH
+	if frame.Frame.X+newW > newSheetW {
+		newSheetW = frame.Frame.X + newW
+	}
+	if frame.Frame.Y+newH > newSheetH {
+		newSheetH = frame.Frame.Y + newH
+	}
+
+	// Create new spritesheet (expanded canvas if needed) and copy old content
+	newSpritesheet := image.NewRGBA(image.Rect(0, 0, newSheetW, newSheetH))
 	for y := img.Bounds().Min.Y; y < img.Bounds().Max.Y; y++ {
 		for x := img.Bounds().Min.X; x < img.Bounds().Max.X; x++ {
 			newSpritesheet.Set(x, y, img.At(x, y))
 		}
 	}
 
-	// Get new sprite dimensions
-	newBounds := newSprite.Bounds()
-	newW := newBounds.Dx()
-	newH := newBounds.Dy()
+	// Clear the old sprite region first so smaller replacements don't leave stale pixels
+	for y := frame.Frame.Y; y < frame.Frame.Y+frame.Frame.H; y++ {
+		for x := frame.Frame.X; x < frame.Frame.X+frame.Frame.W; x++ {
+			newSpritesheet.Set(x, y, color.RGBA{0, 0, 0, 0})
+		}
+	}
 
 	// Overlay new sprite at the frame position
 	for y := 0; y < newH; y++ {
 		for x := 0; x < newW; x++ {
-			if frame.Frame.X+x < newSpritesheet.Bounds().Max.X && frame.Frame.Y+y < newSpritesheet.Bounds().Max.Y {
-				newSpritesheet.Set(frame.Frame.X+x, frame.Frame.Y+y, newSprite.At(newBounds.Min.X+x, newBounds.Min.Y+y))
-			}
+			newSpritesheet.Set(frame.Frame.X+x, frame.Frame.Y+y, newSprite.At(newBounds.Min.X+x, newBounds.Min.Y+y))
 		}
 	}
 
@@ -938,7 +955,15 @@ func (a *App) ReplaceSingleSprite(files map[string][]byte, spriteName string, ne
 	if newW != frame.Frame.W || newH != frame.Frame.H {
 		frame.Frame.W = newW
 		frame.Frame.H = newH
+		frame.SpriteSourceSize = Rect{X: 0, Y: 0, W: newW, H: newH}
+		frame.SourceSize = Size{W: newW, H: newH}
 		assetData.Spritesheet.Frames[spriteName] = frame
+	}
+
+	// Update meta.size if canvas was expanded
+	if newSheetW != oldSheetW || newSheetH != oldSheetH {
+		assetData.Spritesheet.Meta.Size.W = newSheetW
+		assetData.Spritesheet.Meta.Size.H = newSheetH
 	}
 
 	// Encode new spritesheet
