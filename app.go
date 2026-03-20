@@ -2320,3 +2320,176 @@ func (a *App) ColorizeSprite(files map[string][]byte, spriteName string, hue, sa
 	colorizedBase64 := base64.StdEncoding.EncodeToString(colorizedBuf.Bytes())
 	return a.ReplaceSingleSprite(files, spriteName, colorizedBase64)
 }
+
+// --- Effect Methods ---
+
+// ConvertEffectSWF converts a single effect SWF to Nitro format
+func (a *App) ConvertEffectSWF() (*NitroResponse, error) {
+	selection, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select Effect SWF File",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "SWF Files", Pattern: "*.swf"},
+		},
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	if selection == "" {
+		return nil, nil
+	}
+
+	data, err := os.ReadFile(selection)
+	if err != nil {
+		return nil, err
+	}
+
+	nitro, err := ConvertEffectSWFBytesToNitro(data, selection, a.settings.DefaultZ)
+	if err != nil {
+		return nil, err
+	}
+
+	savePath := strings.TrimSuffix(selection, ".swf") + ".nitro"
+	err = WriteNitro(savePath, nitro)
+	if err != nil {
+		return nil, err
+	}
+
+	return &NitroResponse{
+		Path:  savePath,
+		Files: nitro.Files,
+	}, nil
+}
+
+// BatchConvertEffectSWFsToNitro converts multiple effect SWFs to Nitro format
+func (a *App) BatchConvertEffectSWFsToNitro(swfPaths []string) (*BatchConversionResult, error) {
+	result := &BatchConversionResult{
+		Success: true,
+		Files:   make([]BatchConversionFileResult, 0),
+	}
+
+	zipPath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "Save Converted Effect Files",
+		DefaultFilename: "converted_effect_files.zip",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "ZIP Files (*.zip)", Pattern: "*.zip"},
+		},
+	})
+
+	if err != nil || zipPath == "" {
+		return nil, fmt.Errorf("save dialog cancelled")
+	}
+
+	result.ZipPath = zipPath
+
+	zipFile, err := os.Create(zipPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create zip file: %w", err)
+	}
+	defer zipFile.Close()
+
+	zipWriter := zip.NewWriter(zipFile)
+	defer zipWriter.Close()
+
+	for _, swfPath := range swfPaths {
+		fileResult := BatchConversionFileResult{
+			Path:    swfPath,
+			Success: false,
+		}
+
+		nitroFile, err := ConvertEffectSWFToNitro(swfPath, a.settings.DefaultZ)
+		if err != nil {
+			fileResult.Error = fmt.Sprintf("conversion failed: %v", err)
+			result.Files = append(result.Files, fileResult)
+			result.ErrorCount++
+			result.Success = false
+			continue
+		}
+
+		baseName := filepath.Base(swfPath)
+		baseName = strings.TrimSuffix(baseName, filepath.Ext(baseName))
+
+		nitroFileName := baseName + ".nitro"
+		if err := addNitroToZip(zipWriter, nitroFileName, nitroFile); err != nil {
+			fileResult.Error = fmt.Sprintf("failed to add nitro to zip: %v", err)
+			result.Files = append(result.Files, fileResult)
+			result.ErrorCount++
+			result.Success = false
+			continue
+		}
+
+		fileResult.Success = true
+		result.Files = append(result.Files, fileResult)
+		result.SuccessCount++
+	}
+
+	return result, nil
+}
+
+// LoadEffectMapFile opens a file dialog to load an EffectMap.json file
+func (a *App) LoadEffectMapFile() (*EffectMap, error) {
+	selection, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select EffectMap File",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "JSON Files", Pattern: "*.json"},
+			{DisplayName: "XML Files", Pattern: "*.xml"},
+		},
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	if selection == "" {
+		return nil, nil
+	}
+
+	data, err := os.ReadFile(selection)
+	if err != nil {
+		return nil, err
+	}
+
+	// Try JSON first, then XML
+	var em EffectMap
+	if err := json.Unmarshal(data, &em); err == nil {
+		return &em, nil
+	}
+
+	// Try XML
+	return ParseEffectMapXML(data)
+}
+
+// SaveEffectMapToFile saves an EffectMap to a JSON file
+func (a *App) SaveEffectMapToFile(effectMap EffectMap) (string, error) {
+	savePath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "Save EffectMap",
+		DefaultFilename: "EffectMap.json",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "JSON Files", Pattern: "*.json"},
+		},
+	})
+
+	if err != nil || savePath == "" {
+		return "", fmt.Errorf("save dialog cancelled")
+	}
+
+	err = SaveEffectMap(savePath, &effectMap)
+	if err != nil {
+		return "", err
+	}
+
+	return savePath, nil
+}
+
+// UpdateEffectMap adds or removes entries from an EffectMap
+func (a *App) AddEffectEntry(effectMap EffectMap, id string, lib string, effectType string, revision int) *EffectMap {
+	AddEffectToMap(&effectMap, id, lib, effectType, revision)
+	return &effectMap
+}
+
+// RemoveEffectEntry removes an entry from an EffectMap
+func (a *App) RemoveEffectEntry(effectMap EffectMap, id string) *EffectMap {
+	RemoveEffectFromMap(&effectMap, id)
+	return &effectMap
+}

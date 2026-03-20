@@ -2,6 +2,8 @@ import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import './App.css';
 // @ts-ignore
 import { OpenNitroFile, SaveNitroFile, ConvertSWF, LoadNitroFile, RenameNitroProject, SaveProject, OpenProject, LoadProject, SaveFileAs, CheckForUpdates } from './wailsjs/go/main/App';
+// @ts-ignore
+import { ConvertEffectSWF, LoadEffectMapFile, SaveEffectMapToFile } from './wailsjs/go/main/App';
 // ... updates ...
 
 
@@ -41,7 +43,12 @@ import { CodeEditor } from './components/CodeEditor';
 import { SplashScreen } from './components/SplashScreen';
 import { UpdateDialog } from './components/UpdateDialog';
 import { BatchConverterDialog } from './components/BatchConverterDialog';
-import type { NitroJSON, RsprProject, AvatarTestingState } from './types';
+import { BatchEffectConverterDialog } from './components/BatchEffectConverterDialog';
+import { EffectEditor } from './components/EffectEditor';
+import { EffectPreview } from './components/EffectPreview';
+import type { NitroJSON, RsprProject, AvatarTestingState, EffectAnimation } from './types';
+import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
+import MovieFilterIcon from '@mui/icons-material/MovieFilter';
 
 const darkTheme = createTheme({
     palette: {
@@ -236,6 +243,7 @@ function App() {
     const [updateInfo, setUpdateInfo] = useState<any>(null);
 
     const [batchConverterDialogOpen, setBatchConverterDialogOpen] = useState(false);
+    const [batchEffectConverterDialogOpen, setBatchEffectConverterDialogOpen] = useState(false);
 
     const [pendingRenameName, setPendingRenameName] = useState<string | null>(null);
 
@@ -1182,6 +1190,27 @@ function App() {
                     onConvert={handleConvertSWF}
                     onCloseProject={() => selectedProject && handleCloseProject(selectedProject)}
                     onBatchConvert={() => setBatchConverterDialogOpen(true)}
+                    onConvertEffect={async () => {
+                        try {
+                            const result = await ConvertEffectSWF();
+                            if (result) {
+                                showNotification(`Effect converted: ${result.path}`, 'success');
+                            }
+                        } catch (err) {
+                            showNotification(`Effect conversion failed: ${err}`, 'error');
+                        }
+                    }}
+                    onBatchConvertEffect={() => setBatchEffectConverterDialogOpen(true)}
+                    onLoadEffectMap={async () => {
+                        try {
+                            const em = await LoadEffectMapFile();
+                            if (em) {
+                                showNotification(`EffectMap loaded: ${em.effects?.length || 0} effects`, 'success');
+                            }
+                        } catch (err) {
+                            showNotification(`Failed to load EffectMap: ${err}`, 'error');
+                        }
+                    }}
                 />
 
                 <Box sx={{ display: 'flex', flexGrow: 1, overflow: 'hidden' }}>
@@ -1273,6 +1302,12 @@ function App() {
                                                 )}
                                                 {parsedJson?.spritesheet && (
                                                     <Tab label="Images (Raw)" icon={<PhotoIcon fontSize="small" />} iconPosition="start" sx={{ minHeight: 48 }} />
+                                                )}
+                                                {parsedJson?.animations && (
+                                                    <Tab label="Effect Animation" icon={<AutoFixHighIcon fontSize="small" />} iconPosition="start" sx={{ minHeight: 48 }} />
+                                                )}
+                                                {parsedJson?.animations && (
+                                                    <Tab label="Effect Preview" icon={<MovieFilterIcon fontSize="small" />} iconPosition="start" sx={{ minHeight: 48 }} />
                                                 )}
                                             </Tabs>
                                         </Box>
@@ -1461,6 +1496,39 @@ function App() {
                                                         </Box>
                                                     </Box>
                                                 )}
+
+                                                {/* Effect Animation Editor Tab */}
+                                                {parsedJson?.animations && (
+                                                    <Box role="tabpanel" hidden={tabIndex !== 7} sx={{ height: '100%', width: '100%', overflow: 'auto' }}>
+                                                        {tabIndex === 7 && (
+                                                            <EffectEditor
+                                                                animation={parsedJson.animations ? Object.values(parsedJson.animations)[0] || null : null}
+                                                                onUpdate={(updatedAnim: EffectAnimation) => {
+                                                                    if (!parsedJson?.animations) return;
+                                                                    const key = Object.keys(parsedJson.animations)[0];
+                                                                    const updated = {
+                                                                        ...parsedJson,
+                                                                        animations: { ...parsedJson.animations, [key]: updatedAnim }
+                                                                    };
+                                                                    handleJsonUpdate(updated);
+                                                                }}
+                                                            />
+                                                        )}
+                                                    </Box>
+                                                )}
+
+                                                {/* Effect Preview Tab */}
+                                                {parsedJson?.animations && (
+                                                    <Box role="tabpanel" hidden={tabIndex !== 8} sx={{ height: '100%', width: '100%' }}>
+                                                        {tabIndex === 8 && (
+                                                            <EffectPreview
+                                                                nitroData={parsedJson}
+                                                                spriteImages={{}}
+                                                                animation={parsedJson.animations ? Object.values(parsedJson.animations)[0] || null : null}
+                                                            />
+                                                        )}
+                                                    </Box>
+                                                )}
                                             </>
                                         )}
 
@@ -1517,6 +1585,11 @@ function App() {
             <BatchConverterDialog
                 open={batchConverterDialogOpen}
                 onClose={() => setBatchConverterDialogOpen(false)}
+            />
+
+            <BatchEffectConverterDialog
+                open={batchEffectConverterDialogOpen}
+                onClose={() => setBatchEffectConverterDialogOpen(false)}
             />
 
             <Dialog

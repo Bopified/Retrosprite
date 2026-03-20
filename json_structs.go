@@ -47,6 +47,7 @@ type AssetData struct {
 	Visualizations []AssetVisualizationData `json:"visualizations,omitempty"`
 	Index          *AssetIndex              `json:"index,omitempty"`
 	LogicData      *AssetLogic              `json:"logic,omitempty"`
+	Animations     map[string]AssetAnimation `json:"animations,omitempty"`
 }
 
 type SpritesheetData struct {
@@ -217,6 +218,106 @@ type Dimensions3D struct {
 }
 
 type AssetLogicMask struct {
+}
+
+// --- Effect Animation JSON ---
+
+type AssetAnimation struct {
+	Name          string                       `json:"name,omitempty"`
+	Desc          string                       `json:"desc,omitempty"`
+	ResetOnToggle bool                         `json:"resetOnToggle,omitempty"`
+	Directions    []AssetAnimationDirection    `json:"directions,omitempty"`
+	Shadows       []AssetAnimationShadow       `json:"shadows,omitempty"`
+	Adds          []AssetAnimationAdd          `json:"adds,omitempty"`
+	Removes       []AssetAnimationRemove       `json:"removes,omitempty"`
+	Sprites       []AssetAnimationSprite       `json:"sprites,omitempty"`
+	Frames        []AssetAnimationFrame        `json:"frames,omitempty"`
+	Avatars       []AssetAnimationAvatar       `json:"avatars,omitempty"`
+	Overrides     []AssetAnimationOverride     `json:"overrides,omitempty"`
+}
+
+type AssetAnimationDirection struct {
+	Offset int `json:"offset"`
+}
+
+type AssetAnimationShadow struct {
+	ID string `json:"id"`
+}
+
+type AssetAnimationAdd struct {
+	ID    string `json:"id"`
+	Align string `json:"align,omitempty"`
+	Blend string `json:"blend,omitempty"`
+	Ink   int    `json:"ink,omitempty"`
+	Base  string `json:"base,omitempty"`
+}
+
+type AssetAnimationRemove struct {
+	ID string `json:"id"`
+}
+
+type AssetAnimationSprite struct {
+	ID         string                          `json:"id,omitempty"`
+	Member     string                          `json:"member,omitempty"`
+	Directions int                             `json:"directions,omitempty"`
+	Ink        int                             `json:"ink,omitempty"`
+	StaticY    int                             `json:"staticY,omitempty"`
+	DirList    []AssetAnimationSpriteDirection `json:"directionList,omitempty"`
+}
+
+type AssetAnimationSpriteDirection struct {
+	ID int `json:"id,omitempty"`
+	DX int `json:"dx,omitempty"`
+	DY int `json:"dy,omitempty"`
+	DZ int `json:"dz,omitempty"`
+}
+
+type AssetAnimationFrame struct {
+	Repeats   int                        `json:"repeats,omitempty"`
+	FXs       []AssetAnimationFramePart  `json:"fxs,omitempty"`
+	BodyParts []AssetAnimationFramePart  `json:"bodyparts,omitempty"`
+}
+
+type AssetAnimationFramePart struct {
+	ID     string                         `json:"id,omitempty"`
+	Frame  int                            `json:"frame,omitempty"`
+	Base   string                         `json:"base,omitempty"`
+	Action string                         `json:"action,omitempty"`
+	DX     int                            `json:"dx,omitempty"`
+	DY     int                            `json:"dy,omitempty"`
+	DZ     int                            `json:"dz,omitempty"`
+	DD     int                            `json:"dd,omitempty"`
+	Items  []AssetAnimationFramePartItem  `json:"items,omitempty"`
+}
+
+type AssetAnimationFramePartItem struct {
+	ID   string `json:"id,omitempty"`
+	Base string `json:"base,omitempty"`
+}
+
+type AssetAnimationAvatar struct {
+	Background string `json:"background,omitempty"`
+	Foreground string `json:"foreground,omitempty"`
+	Ink        int    `json:"ink,omitempty"`
+}
+
+type AssetAnimationOverride struct {
+	Name     string                `json:"name,omitempty"`
+	Override string                `json:"override,omitempty"`
+	Frames   []AssetAnimationFrame `json:"frames,omitempty"`
+}
+
+// --- EffectMap JSON ---
+
+type EffectMap struct {
+	Effects []EffectMapLibrary `json:"effects"`
+}
+
+type EffectMapLibrary struct {
+	ID       string `json:"id"`
+	Lib      string `json:"lib"`
+	Type     string `json:"type"`
+	Revision int    `json:"revision"`
 }
 
 // SpriteInfo represents metadata about a single sprite with a thumbnail

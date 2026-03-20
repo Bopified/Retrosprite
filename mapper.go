@@ -244,3 +244,134 @@ func mapLogicDirections(dirs []LogicDirectionXML) []int {
 	}
 	return res
 }
+
+// MapXMLtoEffectAssetData maps XML data to AssetData, including effect animation data
+func MapXMLtoEffectAssetData(
+	assets *AssetsXML,
+	vis *VisualizationDataXML,
+	logic *LogicXML,
+	index *IndexXML,
+	manifest *ManifestXML,
+	animXML *EffectAnimationXML,
+	defaultZ float64,
+	imageSources map[string]string,
+) *AssetData {
+	data := MapXMLtoAssetData(assets, vis, logic, index, manifest, defaultZ, imageSources)
+
+	if animXML != nil {
+		mapEffectAnimation(animXML, data)
+	}
+
+	return data
+}
+
+func mapEffectAnimation(xml *EffectAnimationXML, data *AssetData) {
+	anim := AssetAnimation{
+		Name:          xml.Name,
+		Desc:          xml.Desc,
+		ResetOnToggle: xml.ResetOnToggle,
+	}
+
+	for _, d := range xml.Directions {
+		anim.Directions = append(anim.Directions, AssetAnimationDirection{Offset: d.Offset})
+	}
+
+	for _, s := range xml.Shadows {
+		anim.Shadows = append(anim.Shadows, AssetAnimationShadow{ID: s.ID})
+	}
+
+	for _, a := range xml.Adds {
+		anim.Adds = append(anim.Adds, AssetAnimationAdd{
+			ID:    a.ID,
+			Align: a.Align,
+			Blend: a.Blend,
+			Ink:   a.Ink,
+			Base:  a.Base,
+		})
+	}
+
+	for _, r := range xml.Removes {
+		anim.Removes = append(anim.Removes, AssetAnimationRemove{ID: r.ID})
+	}
+
+	for _, s := range xml.Sprites {
+		sprite := AssetAnimationSprite{
+			ID:         s.ID,
+			Member:     s.Member,
+			Directions: s.Directions,
+			Ink:        s.Ink,
+			StaticY:    s.StaticY,
+		}
+		for _, d := range s.DirList {
+			sprite.DirList = append(sprite.DirList, AssetAnimationSpriteDirection{
+				ID: d.ID, DX: d.DX, DY: d.DY, DZ: d.DZ,
+			})
+		}
+		anim.Sprites = append(anim.Sprites, sprite)
+	}
+
+	for _, f := range xml.Frames {
+		anim.Frames = append(anim.Frames, mapEffectFrame(f))
+	}
+
+	for _, a := range xml.Avatars {
+		anim.Avatars = append(anim.Avatars, AssetAnimationAvatar{
+			Background: a.Background,
+			Foreground: a.Foreground,
+			Ink:        a.Ink,
+		})
+	}
+
+	for _, o := range xml.Overrides {
+		override := AssetAnimationOverride{
+			Name:     o.Name,
+			Override: o.Override,
+		}
+		for _, f := range o.Frames {
+			override.Frames = append(override.Frames, mapEffectFrame(f))
+		}
+		anim.Overrides = append(anim.Overrides, override)
+	}
+
+	if data.Animations == nil {
+		data.Animations = make(map[string]AssetAnimation)
+	}
+	key := anim.Name
+	if key == "" {
+		key = "default"
+	}
+	data.Animations[key] = anim
+}
+
+func mapEffectFrame(f EffectFrameXML2) AssetAnimationFrame {
+	frame := AssetAnimationFrame{
+		Repeats: f.Repeats,
+	}
+	for _, fx := range f.FXs {
+		frame.FXs = append(frame.FXs, mapEffectFramePart(fx))
+	}
+	for _, bp := range f.BodyParts {
+		frame.BodyParts = append(frame.BodyParts, mapEffectFramePart(bp))
+	}
+	return frame
+}
+
+func mapEffectFramePart(p EffectFramePartXML) AssetAnimationFramePart {
+	part := AssetAnimationFramePart{
+		ID:     p.ID,
+		Frame:  p.Frame,
+		Base:   p.Base,
+		Action: p.Action,
+		DX:     p.DX,
+		DY:     p.DY,
+		DZ:     p.DZ,
+		DD:     p.DD,
+	}
+	for _, item := range p.Items {
+		part.Items = append(part.Items, AssetAnimationFramePartItem{
+			ID:   item.ID,
+			Base: item.Base,
+		})
+	}
+	return part
+}
