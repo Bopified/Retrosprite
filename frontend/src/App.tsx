@@ -47,7 +47,6 @@ import { BatchEffectConverterDialog } from './components/BatchEffectConverterDia
 import { EffectEditor } from './components/EffectEditor';
 import { EffectPreview } from './components/EffectPreview';
 import type { NitroJSON, RsprProject, AvatarTestingState, EffectAnimation } from './types';
-import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import MovieFilterIcon from '@mui/icons-material/MovieFilter';
 
 const darkTheme = createTheme({
@@ -757,8 +756,18 @@ function App() {
             setFileContent(content);
         }
 
-        // Default to Code/View tab (2) for JSON files, Preview tab (0) for others
-        setTabIndex(fileName.endsWith('.json') ? 2 : 0);
+        // Default to Preview tab (0) for effect files, Code/View (2) for other JSON, Preview (0) for others
+        if (fileName.endsWith('.json')) {
+            try {
+                const parsed = JSON.parse(content);
+                // If it has animations, it's an effect - go to Effect Preview (tab 0)
+                setTabIndex(parsed?.animations ? 0 : 2);
+            } catch {
+                setTabIndex(2);
+            }
+        } else {
+            setTabIndex(0);
+        }
         setIsDirty(false); // Switching files resets dirtyness of the VIEW (not necessarily the project, but we are simple for now)
     };
 
@@ -821,6 +830,11 @@ function App() {
         return null;
     }, [fileContent, selectedFile]);
 
+    // Detect if the loaded JSON is an effect (has animations field)
+    const isEffect = useMemo(() => {
+        return !!(parsedJson?.animations && Object.keys(parsedJson.animations).length > 0);
+    }, [parsedJson]);
+
     const linkedImageContent = useMemo(() => {
         if (selectedProject && parsedJson && parsedJson.spritesheet && parsedJson.spritesheet.meta && parsedJson.spritesheet.meta.image) {
             return projects[selectedProject].files[parsedJson.spritesheet.meta.image] || null;
@@ -832,6 +846,21 @@ function App() {
         if (!selectedProject) return {};
         return projects[selectedProject].files;
     }, [projects, selectedProject]);
+
+    // Load spritesheet as HTMLImageElement for EffectPreview
+    const [effectSpriteImages, setEffectSpriteImages] = useState<Record<string, HTMLImageElement>>({});
+    useEffect(() => {
+        if (!linkedImageContent || !parsedJson?.spritesheet?.meta?.image) {
+            setEffectSpriteImages({});
+            return;
+        }
+        const imageName = parsedJson.spritesheet.meta.image;
+        const img = new Image();
+        img.onload = () => {
+            setEffectSpriteImages({ [imageName]: img });
+        };
+        img.src = `data:image/png;base64,${linkedImageContent}`;
+    }, [linkedImageContent, parsedJson?.spritesheet?.meta?.image]);
 
     const handleRename = async (newName: string) => {
         if (!selectedProject) return;
@@ -1192,9 +1221,22 @@ function App() {
                     onBatchConvert={() => setBatchConverterDialogOpen(true)}
                     onConvertEffect={async () => {
                         try {
-                            const result = await ConvertEffectSWF();
+                            const result = await ConvertEffectSWF() as any;
                             if (result) {
-                                showNotification(`Effect converted: ${result.path}`, 'success');
+                                const projectName = getFileNameFromPath(result.path);
+                                setProjects(prev => ({
+                                    ...prev,
+                                    [projectName]: {
+                                        path: result.path,
+                                        files: result.files as any
+                                    }
+                                }));
+                                setSelectedProject(projectName);
+                                setSelectedFile(null);
+                                setFileContent("");
+                                addToRecent(result.path);
+                                setIsDirty(false);
+                                showNotification("Effect converted! Saved to: " + result.path, "success");
                             }
                         } catch (err) {
                             showNotification(`Effect conversion failed: ${err}`, 'error');
@@ -1287,27 +1329,21 @@ function App() {
                                                 scrollButtons="auto"
                                                 sx={{ minHeight: 48 }}
                                             >
-                                                <Tab label="Preview" icon={<VisibilityIcon fontSize="small" />} iconPosition="start" sx={{ minHeight: 48 }} />
-                                                <Tab label="Settings" icon={<SettingsIcon fontSize="small" />} iconPosition="start" sx={{ minHeight: 48 }} />
-                                                <Tab label="Code / View" icon={<TextSnippetIcon fontSize="small" />} iconPosition="start" sx={{ minHeight: 48 }} />
+                                                <Tab value={0} label={isEffect ? "Effect Preview" : "Preview"} icon={isEffect ? <MovieFilterIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />} iconPosition="start" sx={{ minHeight: 48 }} />
+                                                <Tab value={1} label={isEffect ? "Effect Settings" : "Settings"} icon={<SettingsIcon fontSize="small" />} iconPosition="start" sx={{ minHeight: 48 }} />
+                                                <Tab value={2} label="Code / View" icon={<TextSnippetIcon fontSize="small" />} iconPosition="start" sx={{ minHeight: 48 }} />
 
                                                 {parsedJson?.spritesheet && (
-                                                    <Tab label="Sprite Editor" icon={<AppsIcon fontSize="small" />} iconPosition="start" sx={{ minHeight: 48 }} />
+                                                    <Tab value={3} label="Sprite Editor" icon={<AppsIcon fontSize="small" />} iconPosition="start" sx={{ minHeight: 48 }} />
                                                 )}
-                                                {parsedJson?.assets && (
-                                                    <Tab label="Positions (Assets)" icon={<OpenWithIcon fontSize="small" />} iconPosition="start" sx={{ minHeight: 48 }} />
+                                                {parsedJson?.assets && !isEffect && (
+                                                    <Tab value={4} label="Positions (Assets)" icon={<OpenWithIcon fontSize="small" />} iconPosition="start" sx={{ minHeight: 48 }} />
                                                 )}
-                                                {parsedJson?.visualizations && (
-                                                    <Tab label="Layers" icon={<LayersIcon fontSize="small" />} iconPosition="start" sx={{ minHeight: 48 }} />
+                                                {parsedJson?.visualizations && !isEffect && (
+                                                    <Tab value={5} label="Layers" icon={<LayersIcon fontSize="small" />} iconPosition="start" sx={{ minHeight: 48 }} />
                                                 )}
                                                 {parsedJson?.spritesheet && (
-                                                    <Tab label="Images (Raw)" icon={<PhotoIcon fontSize="small" />} iconPosition="start" sx={{ minHeight: 48 }} />
-                                                )}
-                                                {parsedJson?.animations && (
-                                                    <Tab label="Effect Animation" icon={<AutoFixHighIcon fontSize="small" />} iconPosition="start" sx={{ minHeight: 48 }} />
-                                                )}
-                                                {parsedJson?.animations && (
-                                                    <Tab label="Effect Preview" icon={<MovieFilterIcon fontSize="small" />} iconPosition="start" sx={{ minHeight: 48 }} />
+                                                    <Tab value={6} label="Images (Raw)" icon={<PhotoIcon fontSize="small" />} iconPosition="start" sx={{ minHeight: 48 }} />
                                                 )}
                                             </Tabs>
                                         </Box>
@@ -1384,31 +1420,55 @@ function App() {
                                             </Box>
                                         ) : (
                                             <>
-                                                {parsedJson?.spritesheet && (
-                                                    <Box role="tabpanel" hidden={tabIndex !== 0} sx={{ height: '100%', width: '100%' }}>
-                                                        {tabIndex === 0 && (
+                                                {/* Tab 0: Preview / Effect Preview */}
+                                                <Box role="tabpanel" hidden={tabIndex !== 0} sx={{ height: '100%', width: '100%' }}>
+                                                    {tabIndex === 0 && (
+                                                        isEffect ? (
+                                                            <EffectPreview
+                                                                nitroData={parsedJson}
+                                                                spriteImages={effectSpriteImages}
+                                                                animation={parsedJson.animations ? Object.values(parsedJson.animations)[0] || null : null}
+                                                            />
+                                                        ) : parsedJson?.spritesheet ? (
                                                             <FurniturePreview
                                                                 jsonContent={parsedJson}
                                                                 images={currentProjectFiles}
                                                                 avatarTesting={avatarTestingState}
                                                                 onAvatarTestingChange={setAvatarTestingState}
                                                             />
-                                                        )}
-                                                    </Box>
-                                                )}
-
-                                                <Box role="tabpanel" hidden={tabIndex !== 1} sx={{ height: '100%', width: '100%' }}>
-                                                    {tabIndex === 1 && (
-                                                        <FurnitureSettings
-                                                            jsonContent={parsedJson}
-                                                            onUpdate={handleJsonUpdate}
-                                                            onRename={handleRename}
-                                                            avatarTesting={avatarTestingState}
-                                                            onAvatarTestingChange={setAvatarTestingState}
-                                                        />
+                                                        ) : null
                                                     )}
                                                 </Box>
 
+                                                {/* Tab 1: Settings / Effect Settings */}
+                                                <Box role="tabpanel" hidden={tabIndex !== 1} sx={{ height: '100%', width: '100%' }}>
+                                                    {tabIndex === 1 && (
+                                                        isEffect ? (
+                                                            <EffectEditor
+                                                                animation={parsedJson.animations ? Object.values(parsedJson.animations)[0] || null : null}
+                                                                onUpdate={(updatedAnim: EffectAnimation) => {
+                                                                    if (!parsedJson?.animations) return;
+                                                                    const key = Object.keys(parsedJson.animations)[0];
+                                                                    const updated = {
+                                                                        ...parsedJson,
+                                                                        animations: { ...parsedJson.animations, [key]: updatedAnim }
+                                                                    };
+                                                                    handleJsonUpdate(updated);
+                                                                }}
+                                                            />
+                                                        ) : (
+                                                            <FurnitureSettings
+                                                                jsonContent={parsedJson}
+                                                                onUpdate={handleJsonUpdate}
+                                                                onRename={handleRename}
+                                                                avatarTesting={avatarTestingState}
+                                                                onAvatarTestingChange={setAvatarTestingState}
+                                                            />
+                                                        )
+                                                    )}
+                                                </Box>
+
+                                                {/* Tab 2: Code / View */}
                                                 <Box role="tabpanel" hidden={tabIndex !== 2} sx={{ height: '100%', width: '100%' }}>
                                                     {tabIndex === 2 && (
                                                         <CodeEditor
@@ -1422,6 +1482,7 @@ function App() {
                                                     )}
                                                 </Box>
 
+                                                {/* Tab 3: Sprite Editor */}
                                                 {parsedJson?.spritesheet && (
                                                     <Box role="tabpanel" hidden={tabIndex !== 3} sx={{ height: '100%', width: '100%' }}>
                                                         {tabIndex === 3 && (
@@ -1434,19 +1495,23 @@ function App() {
                                                     </Box>
                                                 )}
 
-                                                <Box role="tabpanel" hidden={tabIndex !== 4} sx={{ height: '100%', width: '100%' }}>
-                                                    {tabIndex === 4 && (
-                                                        <AssetEditor
-                                                            jsonContent={parsedJson}
-                                                            onUpdate={handleJsonUpdate}
-                                                            images={currentProjectFiles}
-                                                            avatarTesting={avatarTestingState}
-                                                            onAvatarTestingChange={setAvatarTestingState}
-                                                        />
-                                                    )}
-                                                </Box>
+                                                {/* Tab 4: Positions/Assets (furniture only) */}
+                                                {parsedJson?.assets && !isEffect && (
+                                                    <Box role="tabpanel" hidden={tabIndex !== 4} sx={{ height: '100%', width: '100%' }}>
+                                                        {tabIndex === 4 && (
+                                                            <AssetEditor
+                                                                jsonContent={parsedJson}
+                                                                onUpdate={handleJsonUpdate}
+                                                                images={currentProjectFiles}
+                                                                avatarTesting={avatarTestingState}
+                                                                onAvatarTestingChange={setAvatarTestingState}
+                                                            />
+                                                        )}
+                                                    </Box>
+                                                )}
 
-                                                {parsedJson?.visualizations && (
+                                                {/* Tab 5: Layers (furniture only) */}
+                                                {parsedJson?.visualizations && !isEffect && (
                                                     <Box role="tabpanel" hidden={tabIndex !== 5} sx={{ height: '100%', width: '100%' }}>
                                                         {tabIndex === 5 && (
                                                             <LayersEditor
@@ -1457,6 +1522,7 @@ function App() {
                                                     </Box>
                                                 )}
 
+                                                {/* Tab 6: Images (Raw) */}
                                                 {parsedJson?.spritesheet && (
                                                     <Box role="tabpanel" hidden={tabIndex !== 6} sx={{ height: '100%', width: '100%' }}>
                                                         <Box sx={{
@@ -1497,38 +1563,6 @@ function App() {
                                                     </Box>
                                                 )}
 
-                                                {/* Effect Animation Editor Tab */}
-                                                {parsedJson?.animations && (
-                                                    <Box role="tabpanel" hidden={tabIndex !== 7} sx={{ height: '100%', width: '100%', overflow: 'auto' }}>
-                                                        {tabIndex === 7 && (
-                                                            <EffectEditor
-                                                                animation={parsedJson.animations ? Object.values(parsedJson.animations)[0] || null : null}
-                                                                onUpdate={(updatedAnim: EffectAnimation) => {
-                                                                    if (!parsedJson?.animations) return;
-                                                                    const key = Object.keys(parsedJson.animations)[0];
-                                                                    const updated = {
-                                                                        ...parsedJson,
-                                                                        animations: { ...parsedJson.animations, [key]: updatedAnim }
-                                                                    };
-                                                                    handleJsonUpdate(updated);
-                                                                }}
-                                                            />
-                                                        )}
-                                                    </Box>
-                                                )}
-
-                                                {/* Effect Preview Tab */}
-                                                {parsedJson?.animations && (
-                                                    <Box role="tabpanel" hidden={tabIndex !== 8} sx={{ height: '100%', width: '100%' }}>
-                                                        {tabIndex === 8 && (
-                                                            <EffectPreview
-                                                                nitroData={parsedJson}
-                                                                spriteImages={{}}
-                                                                animation={parsedJson.animations ? Object.values(parsedJson.animations)[0] || null : null}
-                                                            />
-                                                        )}
-                                                    </Box>
-                                                )}
                                             </>
                                         )}
 

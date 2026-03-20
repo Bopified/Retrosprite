@@ -114,11 +114,14 @@ func ConvertSWFBytesToNitro(swfData []byte, filename string, defaultZ float64) (
 		}
 	}
 
+	var animXML *EffectAnimationXML
+
 	findXML("assets", &assetsXML)
 	findXML("visualization", &visXML)
 	findXML("logic", &logicXML)
 	findXML("index", &indexXML)
 	findXML("manifest", &manifestXML)
+	findXML("animation", &animXML)
 
 	// Extract base name early so we can use it for sprite filtering
 	baseName := strings.TrimSuffix(filename, ".swf")
@@ -148,6 +151,9 @@ func ConvertSWFBytesToNitro(swfData []byte, filename string, defaultZ float64) (
 		}
 	}
 
+	// For effects without assets XML, include all image sprites
+	includeAll := len(neededSprites) == 0
+
 	var sprites []*Sprite
 
 	// Only include sprites that match assets without source references
@@ -169,8 +175,8 @@ func ConvertSWFBytesToNitro(swfData []byte, filename string, defaultZ float64) (
 			}
 		}
 
-		// Only include this sprite if it's needed by an asset
-		if !neededSprites[assetName] {
+		// Only include this sprite if it's needed by an asset (or include all for effects)
+		if !includeAll && !neededSprites[assetName] {
 			continue
 		}
 
@@ -189,7 +195,7 @@ func ConvertSWFBytesToNitro(swfData []byte, filename string, defaultZ float64) (
 		return nil, fmt.Errorf("failed to pack sprites: %w", err)
 	}
 
-	assetData := MapXMLtoAssetData(assetsXML, visXML, logicXML, indexXML, manifestXML, defaultZ, parsed.ImageSources)
+	assetData := MapXMLtoEffectAssetData(assetsXML, visXML, logicXML, indexXML, manifestXML, animXML, defaultZ, parsed.ImageSources)
 	assetData.Spritesheet = sheetData
 	assetData.Name = baseName // Ensure name is set
 
