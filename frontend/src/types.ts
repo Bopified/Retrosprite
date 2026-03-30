@@ -73,7 +73,108 @@ export interface NitroJSON {
     logic?: NitroLogic;
     visualizations?: NitroVisualization[];
     spritesheet?: NitroSpriteSheet;
+    animations?: Record<string, EffectAnimation>;
     [key: string]: any;
+}
+
+// --- Effect Animation Types ---
+
+export interface EffectAnimationDirection {
+    offset: number;
+}
+
+export interface EffectAnimationShadow {
+    id: string;
+}
+
+export interface EffectAnimationAdd {
+    id: string;
+    align?: string;
+    blend?: string;
+    ink?: number;
+    base?: string;
+}
+
+export interface EffectAnimationRemove {
+    id: string;
+}
+
+export interface EffectAnimationSpriteDirection {
+    id?: number;
+    dx?: number;
+    dy?: number;
+    dz?: number;
+}
+
+export interface EffectAnimationSprite {
+    id?: string;
+    member?: string;
+    directions?: number;
+    ink?: number;
+    staticY?: number;
+    directionList?: EffectAnimationSpriteDirection[];
+}
+
+export interface EffectAnimationFramePartItem {
+    id?: string;
+    base?: string;
+}
+
+export interface EffectAnimationFramePart {
+    id?: string;
+    frame?: number;
+    base?: string;
+    action?: string;
+    dx?: number;
+    dy?: number;
+    dz?: number;
+    dd?: number;
+    items?: EffectAnimationFramePartItem[];
+}
+
+export interface EffectAnimationFrame {
+    repeats?: number;
+    fxs?: EffectAnimationFramePart[];
+    bodyparts?: EffectAnimationFramePart[];
+}
+
+export interface EffectAnimationAvatar {
+    background?: string;
+    foreground?: string;
+    ink?: number;
+}
+
+export interface EffectAnimationOverride {
+    name?: string;
+    override?: string;
+    frames?: EffectAnimationFrame[];
+}
+
+export interface EffectAnimation {
+    name?: string;
+    desc?: string;
+    resetOnToggle?: boolean;
+    directions?: EffectAnimationDirection[];
+    shadows?: EffectAnimationShadow[];
+    adds?: EffectAnimationAdd[];
+    removes?: EffectAnimationRemove[];
+    sprites?: EffectAnimationSprite[];
+    frames?: EffectAnimationFrame[];
+    avatars?: EffectAnimationAvatar[];
+    overrides?: EffectAnimationOverride[];
+}
+
+// --- EffectMap Types ---
+
+export interface EffectMapLibrary {
+    id: string;
+    lib: string;
+    type: string;
+    revision: number;
+}
+
+export interface EffectMapData {
+    effects: EffectMapLibrary[];
 }
 
 export interface RsprProject {

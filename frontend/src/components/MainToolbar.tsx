@@ -20,6 +20,9 @@ interface MainToolbarProps {
     onConvert: () => void;
     onCloseProject: () => void;
     onBatchConvert: () => void;
+    onConvertEffect?: () => void;
+    onBatchConvertEffect?: () => void;
+    onLoadEffectMap?: () => void;
 }
 
 export function MainToolbar({
@@ -32,7 +35,10 @@ export function MainToolbar({
     onSaveProject,
     onConvert,
     onCloseProject,
-    onBatchConvert
+    onBatchConvert,
+    onConvertEffect,
+    onBatchConvertEffect,
+    onLoadEffectMap
 }: MainToolbarProps) {
     const [fileAnchorEl, setFileAnchorEl] = useState<null | HTMLElement>(null);
     const [toolsAnchorEl, setToolsAnchorEl] = useState<null | HTMLElement>(null);
@@ -94,6 +100,12 @@ export function MainToolbar({
                         <TransformIcon fontSize="small" sx={{ mr: 1.5 }} />
                         Import SWF (.swf)...
                     </MenuItem>
+                    {onConvertEffect && (
+                        <MenuItem onClick={() => { onConvertEffect(); closeFileMenu(); }}>
+                            <TransformIcon fontSize="small" sx={{ mr: 1.5 }} />
+                            Import Effect SWF (.swf)...
+                        </MenuItem>
+                    )}
                     <Divider />
                     <MenuItem onClick={() => { onSaveProject(); closeFileMenu(); }} disabled={!hasProject}>
                         <SaveIcon fontSize="small" sx={{ mr: 1.5 }} />
@@ -128,6 +140,19 @@ export function MainToolbar({
                         <TransformIcon fontSize="small" sx={{ mr: 1.5 }} />
                         Batch SWF to Nitro Converter
                     </MenuItem>
+                    <Divider />
+                    {onBatchConvertEffect && (
+                        <MenuItem onClick={() => { onBatchConvertEffect(); closeToolsMenu(); }}>
+                            <TransformIcon fontSize="small" sx={{ mr: 1.5 }} />
+                            Batch Effect SWF to Nitro
+                        </MenuItem>
+                    )}
+                    {onLoadEffectMap && (
+                        <MenuItem onClick={() => { onLoadEffectMap(); closeToolsMenu(); }}>
+                            <TransformIcon fontSize="small" sx={{ mr: 1.5 }} />
+                            EffectMap Manager
+                        </MenuItem>
+                    )}
                 </Menu>
 
                 <Box sx={{ flexGrow: 1, display: 'flex', justifyContent: 'center', opacity: 0.7, flexDirection: 'column', alignItems: 'center' }}>

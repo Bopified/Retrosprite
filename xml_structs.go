@@ -171,3 +171,105 @@ type LogicDimensionsXML struct {
 type LogicDirectionXML struct {
 	ID int `xml:"id,attr"`
 }
+
+// --- Effect Animation XML ---
+
+type EffectAnimationXML struct {
+	XMLName       xml.Name                   `xml:"animation"`
+	Name          string                     `xml:"name,attr"`
+	Desc          string                     `xml:"desc,attr"`
+	ResetOnToggle bool                       `xml:"resetOnToggle,attr"`
+	Directions    []EffectDirectionOffsetXML `xml:"direction"`
+	Shadows       []EffectShadowXML          `xml:"shadow"`
+	Adds          []EffectAddXML             `xml:"add"`
+	Removes       []EffectRemoveXML          `xml:"remove"`
+	Sprites       []EffectSpriteXML          `xml:"sprite"`
+	Frames        []EffectFrameXML2          `xml:"frame"`
+	Avatars       []EffectAvatarXML          `xml:"avatar"`
+	Overrides     []EffectOverrideXML        `xml:"override"`
+}
+
+type EffectDirectionOffsetXML struct {
+	Offset int `xml:"offset,attr"`
+}
+
+type EffectShadowXML struct {
+	ID string `xml:"id,attr"`
+}
+
+type EffectAddXML struct {
+	ID    string `xml:"id,attr"`
+	Align string `xml:"align,attr"`
+	Blend string `xml:"blend,attr"`
+	Ink   int    `xml:"ink,attr"`
+	Base  string `xml:"base,attr"`
+}
+
+type EffectRemoveXML struct {
+	ID string `xml:"id,attr"`
+}
+
+type EffectSpriteXML struct {
+	ID         string                      `xml:"id,attr"`
+	Member     string                      `xml:"member,attr"`
+	Directions int                         `xml:"directions,attr"`
+	Ink        int                         `xml:"ink,attr"`
+	StaticY    int                         `xml:"staticY,attr"`
+	DirList    []EffectSpriteDirectionXML  `xml:"direction"`
+}
+
+type EffectSpriteDirectionXML struct {
+	ID int `xml:"id,attr"`
+	DX int `xml:"dx,attr"`
+	DY int `xml:"dy,attr"`
+	DZ int `xml:"dz,attr"`
+}
+
+type EffectFrameXML2 struct {
+	Repeats   int                    `xml:"repeats,attr"`
+	FXs       []EffectFramePartXML   `xml:"fx"`
+	BodyParts []EffectFramePartXML   `xml:"bodypart"`
+}
+
+type EffectFramePartXML struct {
+	ID     string                      `xml:"id,attr"`
+	Frame  int                         `xml:"frame,attr"`
+	Base   string                      `xml:"base,attr"`
+	Action string                      `xml:"action,attr"`
+	DX     int                         `xml:"dx,attr"`
+	DY     int                         `xml:"dy,attr"`
+	DZ     int                         `xml:"dz,attr"`
+	DD     int                         `xml:"dd,attr"`
+	Items  []EffectFramePartItemXML    `xml:"item"`
+}
+
+type EffectFramePartItemXML struct {
+	ID   string `xml:"id,attr"`
+	Base string `xml:"base,attr"`
+}
+
+type EffectAvatarXML struct {
+	Background string `xml:"background,attr"`
+	Foreground string `xml:"foreground,attr"`
+	Ink        int    `xml:"ink,attr"`
+}
+
+type EffectOverrideXML struct {
+	Name     string             `xml:"name,attr"`
+	Override string             `xml:"override,attr"`
+	Frames   []EffectFrameXML2  `xml:"frame"`
+}
+
+// --- EffectMap XML ---
+
+type EffectMapXML struct {
+	XMLName xml.Name            `xml:"map"`
+	Effects []EffectMapEntryXML `xml:"effect"`
+}
+
+type EffectMapEntryXML struct {
+	ID       string `xml:"id,attr"`
+	Lib      string `xml:"lib,attr"`
+	Type     string `xml:"type,attr"`
+	Revision int    `xml:"revision,attr"`
+}
