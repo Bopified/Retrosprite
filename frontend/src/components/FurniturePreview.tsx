@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Box, Button, Typography, IconButton, Slider, TextField, MenuItem } from '@mui/material';
+import { Box, Button, Typography, IconButton, Slider, TextField, MenuItem, Alert } from '@mui/material';
 import RotateRightIcon from '@mui/icons-material/RotateRight';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import PauseIcon from '@mui/icons-material/Pause';
@@ -234,7 +234,26 @@ export const FurniturePreview: React.FC<FurniturePreviewProps> = ({
         pY: number;
         ink?: string;
         isShadow?: boolean;
+        tintColor?: string; // CSS hex color for color palette tinting
     }
+
+    // Get tint color for a layer from the default color palette (palette 0)
+    const getLayerTintColor = (layerIndex: number): string | undefined => {
+        const colors = mainViz.colors;
+        if (!colors) return undefined;
+        // Use palette 0 as the default display color
+        const palette = colors['0'];
+        if (!palette?.layers) return undefined;
+        const layerColor = palette.layers[String(layerIndex)];
+        if (!layerColor || layerColor.color === undefined) return undefined;
+        // Don't apply white tint (no-op)
+        if (layerColor.color === 16777215) return undefined;
+        const hex = (layerColor.color & 0xFFFFFF).toString(16).padStart(6, '0');
+        return `#${hex}`;
+    };
+
+    // Check if this furniture has any color palettes defined
+    const hasColorPalettes = !!(mainViz.colors && Object.keys(mainViz.colors).length > 0);
 
     // Helper function: Calculate isometric tile screen position
     // Center of grid is (15,15) which represents layer 0
@@ -547,7 +566,8 @@ export const FurniturePreview: React.FC<FurniturePreviewProps> = ({
                     // Pass pivot for transform origin
                     pX: regX,
                     pY: regY,
-                    ink: layers[String(i)]?.ink
+                    ink: layers[String(i)]?.ink,
+                    tintColor: getLayerTintColor(i)
                 });
             }
         }
@@ -739,6 +759,17 @@ export const FurniturePreview: React.FC<FurniturePreviewProps> = ({
                     </IconButton>
                 </Box>
             </Box>
+
+            {/* Color Tint Warning */}
+            {hasColorPalettes && (
+                <Alert severity="warning" sx={{
+                    borderRadius: 0,
+                    py: 0.5,
+                    '& .MuiAlert-message': { py: 0 }
+                }}>
+                    This furniture has color tint palettes applied. The preview shows Palette 0 tinting. Edit or remove palettes in the Layers tab if your sprites are already the final color.
+                </Alert>
+            )}
 
             {/* Canvas / Render Area */}
             <Box
@@ -1080,7 +1111,18 @@ export const FurniturePreview: React.FC<FurniturePreviewProps> = ({
                                 mixBlendMode: item.isShadow ? 'multiply' : (item.ink === 'ADD' ? 'screen' : 'normal'),
                                 imageRendering: 'auto'
                             }}
-                        />
+                        >
+                            {/* Color tint overlay - uses multiply blend to tint the sprite */}
+                            {item.tintColor && (
+                                <div style={{
+                                    position: 'absolute',
+                                    inset: 0,
+                                    backgroundColor: item.tintColor,
+                                    mixBlendMode: 'multiply',
+                                    pointerEvents: 'none'
+                                }} />
+                            )}
+                        </div>
                     )) : null}
                     </div>
                 </div>

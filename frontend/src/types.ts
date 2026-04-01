@@ -55,13 +55,21 @@ export interface NitroAnimation {
     layers: Record<string, NitroAnimationLayer>;
 }
 
+export interface NitroColorLayer {
+    color: number;
+}
+
+export interface NitroColor {
+    layers: Record<string, NitroColorLayer>;
+}
+
 export interface NitroVisualization {
     angle: number;
     layerCount: number;
     size: number;
     layers?: Record<string, NitroLayer>;
     directions?: Record<string, any>;
-    colors?: Record<string, any>;
+    colors?: Record<string, NitroColor>;
     animations?: Record<string, NitroAnimation>;
 }
 

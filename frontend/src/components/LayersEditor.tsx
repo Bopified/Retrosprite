@@ -7,6 +7,7 @@ import {
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import type { NitroJSON, NitroVisualization, NitroLayer } from '../types';
+import { ColorPaletteEditor } from './ColorPaletteEditor';
 
 interface LayersEditorProps {
     jsonContent: NitroJSON;
@@ -287,7 +288,7 @@ export const LayersEditor: React.FC<LayersEditorProps> = ({ jsonContent, onUpdat
                 </Box>
             </Box>
 
-            {/* Right Column: Info & Visualization Settings */}
+            {/* Right Column: Info, Visualization Settings & Color Palettes */}
             <Box sx={{ flexGrow: 1, bgcolor: '#1b2636', p: 3, overflowY: 'auto' }}>
                 <Typography variant="h6" gutterBottom>Visualization Settings</Typography>
 
@@ -321,7 +322,7 @@ export const LayersEditor: React.FC<LayersEditorProps> = ({ jsonContent, onUpdat
                         />
                     </Box>
 
-                    <Box sx={{ bgcolor: '#233044', p: 2, borderRadius: 1, border: '1px solid #444' }}>
+                    <Box sx={{ bgcolor: '#233044', p: 2, borderRadius: 1, border: '1px solid #444', mb: 3 }}>
                         <Typography variant="subtitle2" gutterBottom color="text.secondary">
                             Layer Overview
                         </Typography>
@@ -334,7 +335,17 @@ export const LayersEditor: React.FC<LayersEditorProps> = ({ jsonContent, onUpdat
                         <Typography variant="body2" color="text.secondary" mt={1}>
                             Directions: {Object.keys(currentViz.directions || {}).length} defined
                         </Typography>
+                        <Typography variant="body2" color="text.secondary" mt={1}>
+                            Color Palettes: {Object.keys(currentViz.colors || {}).length} defined
+                        </Typography>
                     </Box>
+
+                    {/* Color Palette Editor */}
+                    <ColorPaletteEditor
+                        jsonContent={jsonContent}
+                        vizIndex={selectedVisualizationIndex}
+                        onUpdate={onUpdate}
+                    />
 
                     <Box sx={{ mt: 3, p: 2, bgcolor: 'rgba(144, 202, 249, 0.05)', borderRadius: 1, border: '1px solid rgba(144, 202, 249, 0.2)' }}>
                         <Typography variant="subtitle2" gutterBottom>About Layers</Typography>

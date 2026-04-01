@@ -562,14 +562,14 @@ function App() {
         }
     };
 
-    const handleExportNitro = async () => {
+    const performExportNitro = async () => {
          if (!selectedProject) return;
          const project = projects[selectedProject];
          const filesToSave = { ...project.files };
          if (selectedFile && isTextFile(selectedFile)) {
              filesToSave[selectedFile] = encodeContent(fileContent);
          }
-         
+
          // Always force dialog for export
          const nitroName = selectedProject.replace(/\.(nitro|swf|rspr)$/i, '');
          try {
@@ -581,6 +581,33 @@ function App() {
              console.error(err);
              showNotification("Error exporting nitro: " + err, "error");
          }
+    };
+
+    const handleExportNitro = async () => {
+        if (!selectedProject) return;
+
+        // Check if the furniture has color palettes that will tint sprites in-game
+        try {
+            const currentContent = selectedFile && isTextFile(selectedFile) ? fileContent : null;
+            const jsonFile = Object.keys(projects[selectedProject].files).find(f => f.endsWith('.json'));
+            if (jsonFile) {
+                const jsonStr = jsonFile === selectedFile && currentContent
+                    ? currentContent
+                    : atob(projects[selectedProject].files[jsonFile]);
+                const parsed = JSON.parse(jsonStr);
+                const viz = parsed.visualizations?.find((v: any) => v.size === 64) || parsed.visualizations?.[0];
+                if (viz?.colors && Object.keys(viz.colors).length > 0) {
+                    requestConfirmation(
+                        performExportNitro,
+                        "Color Tint Palettes Detected",
+                        "This furniture has color tint palettes that will recolor sprites in-game. If your sprites are already the final color, consider removing the palettes in the Layers tab first. Export anyway?"
+                    );
+                    return;
+                }
+            }
+        } catch { /* ignore parse errors, proceed with export */ }
+
+        await performExportNitro();
     }
 
     const handleSaveFile = async () => {
