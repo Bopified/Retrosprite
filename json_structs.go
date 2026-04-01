@@ -146,8 +146,8 @@ type AssetColorLayer struct {
 }
 
 type AssetVisualAnimation struct {
-	TransitionTo        int                                  `json:"transitionTo,omitempty"`
-	TransitionFrom      int                                  `json:"transitionFrom,omitempty"`
+	TransitionTo        *int                                 `json:"transitionTo,omitempty"`
+	TransitionFrom      *int                                 `json:"transitionFrom,omitempty"`
 	ImmediateChangeFrom bool                                 `json:"immediateChangeFrom,omitempty"`
 	RandomStart         bool                                 `json:"randomStart,omitempty"`
 	Layers              map[string]AssetVisualAnimationLayer `json:"layers,omitempty"`

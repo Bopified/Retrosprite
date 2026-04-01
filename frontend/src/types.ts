@@ -52,6 +52,10 @@ export interface NitroAnimationLayer {
 }
 
 export interface NitroAnimation {
+    transitionTo?: number;
+    transitionFrom?: number;
+    immediateChangeFrom?: boolean;
+    randomStart?: boolean;
     layers: Record<string, NitroAnimationLayer>;
 }
 

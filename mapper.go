@@ -175,11 +175,15 @@ func mapVisualization(xml *VisualizationDataXML, data *AssetData) {
 
 		for _, anim := range v.Animations {
 			a := AssetVisualAnimation{
-				TransitionTo:        anim.TransitionTo,
-				TransitionFrom:      anim.TransitionFrom,
 				ImmediateChangeFrom: anim.ImmediateChangeFrom,
 				RandomStart:         anim.RandomStart,
 				Layers:              make(map[string]AssetVisualAnimationLayer),
+			}
+			if anim.TransitionTo != 0 || anim.ID >= 100 {
+				a.TransitionTo = &anim.TransitionTo
+			}
+			if anim.TransitionFrom != 0 || anim.ID >= 100 {
+				a.TransitionFrom = &anim.TransitionFrom
 			}
 
 			for _, al := range anim.Layers {
