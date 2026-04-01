@@ -914,6 +914,16 @@ export const AssetEditor: React.FC<AssetEditorProps> = ({
                                 // Don't change z-index when selected, use outline instead
                                 const finalZ = calculatedZ;
 
+                                const cornerSize = 5;
+                                const cornerStyle: React.CSSProperties = {
+                                    position: 'absolute',
+                                    width: cornerSize,
+                                    height: cornerSize,
+                                    borderColor: '#00ff00',
+                                    borderStyle: 'solid',
+                                    pointerEvents: 'none',
+                                };
+
                                 return (
                                     <div
                                         key={key}
@@ -924,7 +934,6 @@ export const AssetEditor: React.FC<AssetEditorProps> = ({
                                             top: -(asset.y || 0) + renderData.offset.y,
                                             zIndex: finalZ,
                                             cursor: isReadOnlyDirection ? 'default' : 'move',
-                                            outline: isSelected ? '1px solid #00ff00' : 'none',
                                             transform: asset.flipH ? 'scaleX(-1)' : 'none',
                                             transformOrigin: `${pivotX}px ${pivotY}px`,
                                             userSelect: 'none',
@@ -932,6 +941,15 @@ export const AssetEditor: React.FC<AssetEditorProps> = ({
                                         }}
                                     >
                                         <div style={renderData.style} />
+                                        {/* Selection corner markers */}
+                                        {isSelected && (
+                                            <>
+                                                <div style={{ ...cornerStyle, top: -1, left: -1, borderWidth: '2px 0 0 2px' }} />
+                                                <div style={{ ...cornerStyle, top: -1, right: -1, borderWidth: '2px 2px 0 0' }} />
+                                                <div style={{ ...cornerStyle, bottom: -1, left: -1, borderWidth: '0 0 2px 2px' }} />
+                                                <div style={{ ...cornerStyle, bottom: -1, right: -1, borderWidth: '0 2px 2px 0' }} />
+                                            </>
+                                        )}
                                     </div>
                                 );
                             })}
