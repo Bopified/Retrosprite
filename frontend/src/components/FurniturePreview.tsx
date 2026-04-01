@@ -1109,7 +1109,7 @@ export const FurniturePreview: React.FC<FurniturePreviewProps> = ({
                                 transformOrigin: item.flipH ? `${item.pX}px ${item.pY}px` : 'center',
                                 opacity: item.isShadow ? 0.3 : 1,
                                 mixBlendMode: item.isShadow ? 'multiply' : (item.ink === 'ADD' ? 'screen' : 'normal'),
-                                imageRendering: 'auto'
+                                imageRendering: 'pixelated'
                             }}
                         >
                             {/* Color tint overlay - uses multiply blend to tint the sprite */}

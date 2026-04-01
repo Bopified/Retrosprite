@@ -129,15 +129,18 @@ func mapVisualization(xml *VisualizationDataXML, data *AssetData) {
 		}
 
 		for _, l := range v.Layers {
-			vis.Layers[strconv.Itoa(l.ID)] = AssetVisualizationLayer{
+			layer := AssetVisualizationLayer{
 				X:           l.X,
 				Y:           l.Y,
 				Z:           l.Z,
-				Alpha:       l.Alpha,
 				Ink:         l.Ink,
 				Tag:         l.Tag,
 				IgnoreMouse: l.IgnoreMouse,
 			}
+			if l.Alpha != 0 {
+				layer.Alpha = &l.Alpha
+			}
+			vis.Layers[strconv.Itoa(l.ID)] = layer
 		}
 
 		for _, d := range v.Directions {
@@ -145,15 +148,18 @@ func mapVisualization(xml *VisualizationDataXML, data *AssetData) {
 				Layers: make(map[string]AssetVisualizationLayer),
 			}
 			for _, l := range d.Layers {
-				dir.Layers[strconv.Itoa(l.ID)] = AssetVisualizationLayer{
+				layer := AssetVisualizationLayer{
 					X:           l.X,
 					Y:           l.Y,
 					Z:           l.Z,
-					Alpha:       l.Alpha,
 					Ink:         l.Ink,
 					Tag:         l.Tag,
 					IgnoreMouse: l.IgnoreMouse,
 				}
+				if l.Alpha != 0 {
+					layer.Alpha = &l.Alpha
+				}
+				dir.Layers[strconv.Itoa(l.ID)] = layer
 			}
 			vis.Directions[strconv.Itoa(d.ID)] = dir
 		}

@@ -37,7 +37,7 @@ func (f FlexFloat) MarshalJSON() ([]byte, error) {
 }
 
 type AssetData struct {
-	Type           string                   `json:"-"`
+	Type           string                   `json:"type,omitempty"`
 	Name           string                   `json:"name,omitempty"`
 	Visualization  string                   `json:"visualizationType,omitempty"`
 	Logic          string                   `json:"logicType,omitempty"`
@@ -127,7 +127,7 @@ type AssetVisualizationLayer struct {
 	X           int    `json:"x,omitempty"`
 	Y           int    `json:"y,omitempty"`
 	Z           int    `json:"z,omitempty"`
-	Alpha       int    `json:"alpha,omitempty"`
+	Alpha       *int   `json:"alpha,omitempty"`
 	Ink         string `json:"ink,omitempty"`
 	Tag         string `json:"tag,omitempty"`
 	IgnoreMouse bool   `json:"ignoreMouse,omitempty"`
@@ -142,7 +142,7 @@ type AssetColor struct {
 }
 
 type AssetColorLayer struct {
-	Color int `json:"color,omitempty"`
+	Color int `json:"color"`
 }
 
 type AssetVisualAnimation struct {
