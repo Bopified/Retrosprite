@@ -408,7 +408,9 @@ func extractIconFromNitro(files map[string][]byte, furnitureName string) ([]byte
 	}
 
 	if iconFrame == nil {
-		return nil, fmt.Errorf("no icon frame found")
+		// Effects and other asset types without an _icon_a frame are valid;
+		// signal "no icon to package" rather than treating it as an error.
+		return nil, nil
 	}
 
 	// Get the spritesheet PNG
@@ -1509,14 +1511,16 @@ func createNitroZip(zipPath string, nitroPath string, iconData []byte, furniture
 		return fmt.Errorf("failed to write nitro data to zip: %w", err)
 	}
 
-	// Add the icon PNG
-	iconWriter, err := zipWriter.Create(furnitureName + "_icon.png")
-	if err != nil {
-		return fmt.Errorf("failed to create icon entry in zip: %w", err)
-	}
+	// Add the icon PNG when present (effects have no icon).
+	if len(iconData) > 0 {
+		iconWriter, err := zipWriter.Create(furnitureName + "_icon.png")
+		if err != nil {
+			return fmt.Errorf("failed to create icon entry in zip: %w", err)
+		}
 
-	if _, err := iconWriter.Write(iconData); err != nil {
-		return fmt.Errorf("failed to write icon data to zip: %w", err)
+		if _, err := iconWriter.Write(iconData); err != nil {
+			return fmt.Errorf("failed to write icon data to zip: %w", err)
+		}
 	}
 
 	return nil
